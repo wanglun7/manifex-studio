@@ -1,0 +1,9 @@
+.env
+.mastra/
+artifacts/
+src/mastra/public/artifacts/
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+_archive/
