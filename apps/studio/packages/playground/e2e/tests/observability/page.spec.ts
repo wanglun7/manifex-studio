@@ -9,7 +9,7 @@ test.afterEach(async () => {
 test('has overall information', async ({ page }) => {
   await page.goto('/observability');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectCurrentBreadcrumb(page, 'Traces');
   await expectRouteDocsLink(page, 'Traces documentation', 'https://mastra.ai/en/docs/observability/tracing/overview');
 });

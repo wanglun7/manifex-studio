@@ -68,6 +68,10 @@ async function main() {
     roleLabel,
     containerPrefix: 'manifex-',
   })
+  const invalidations: string[] = []
+  manager.onInvalidate((invalidatedThreadId, reason) => {
+    invalidations.push(`${invalidatedThreadId}:${reason}`)
+  })
 
   await manager.load()
   await sleep(150)
@@ -79,10 +83,16 @@ async function main() {
   await sleep(150)
   await manager.sweep()
   await assertStatus(containerName, 'exited')
+  if (!invalidations.includes(`${threadId}:stopped`)) {
+    throw new Error('sandbox cache was not invalidated after stop')
+  }
 
   await sleep(250)
   await manager.sweep()
   await assertStatus(containerName, 'missing')
+  if (!invalidations.includes(`${threadId}:removed`)) {
+    throw new Error('sandbox cache was not invalidated after remove')
+  }
 
   const ledger = JSON.parse(await readFile(ledgerPath, 'utf8')) as Array<{
     threadId: string

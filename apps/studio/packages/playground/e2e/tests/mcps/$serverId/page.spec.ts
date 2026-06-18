@@ -9,7 +9,7 @@ test.afterEach(async () => {
 test('has breadcrumb navigation', async ({ page }) => {
   await page.goto('/mcps/simple-mcp-server');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
 
   await expectBreadcrumbLink(page, 'MCP Servers', '/mcps');
 });

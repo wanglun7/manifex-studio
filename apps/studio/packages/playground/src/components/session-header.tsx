@@ -51,8 +51,8 @@ export const SessionHeader = () => {
   return (
     <Header>
       <HeaderTitle>
-        <LogoWithoutText className="h-5 w-8 shrink-0" />
-        Mastra Studio
+        <LogoWithoutText className="size-5 shrink-0" />
+        Manifex Studio
         <AuthStatus />
       </HeaderTitle>
 

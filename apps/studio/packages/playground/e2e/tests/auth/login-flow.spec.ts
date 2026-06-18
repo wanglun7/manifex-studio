@@ -52,7 +52,7 @@ test.describe('Login Flow', () => {
       await page.goto('/login');
 
       // Should see the login page content centered without protected-route sidebar nav
-      await expect(page.getByRole('heading', { name: /Sign in to Mastra Studio/i })).toBeVisible();
+      await expect(page.getByRole('heading', { name: /Sign in to Manifex Studio/i })).toBeVisible();
       await expect(page.getByRole('link', { name: 'Agents', exact: true })).toHaveCount(0);
       await expect(page.getByRole('link', { name: 'Workflows', exact: true })).toHaveCount(0);
     });

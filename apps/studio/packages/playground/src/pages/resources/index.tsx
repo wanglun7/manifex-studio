@@ -32,7 +32,7 @@ const resources = [
   },
   {
     title: 'Share with your team',
-    description: 'Running Mastra Studio locally? Deploy to the cloud so your team can collaborate.',
+    description: 'Running Manifex Studio locally? Deploy to the cloud so your team can collaborate.',
     icon: CloudUploadIcon,
     href: 'https://mastra.ai/cloud',
     external: true,

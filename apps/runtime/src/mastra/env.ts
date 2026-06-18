@@ -1,30 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+import { repoEnvPath, runtimeEnvPath } from './paths.js'
 
-const here = dirname(fileURLToPath(import.meta.url))
-
-function findProjectRoot(start: string) {
-  let current = start
-  for (let i = 0; i < 10; i += 1) {
-    if (
-      existsSync(resolve(current, 'package.json')) &&
-      existsSync(resolve(current, 'src/mastra'))
-    ) {
-      return current
-    }
-    const parent = resolve(current, '..')
-    if (parent === current) break
-    current = parent
-  }
-  return resolve(start, '../..')
-}
-
-const projectRoot = findProjectRoot(here)
-const candidateEnvPaths = [
-  resolve(projectRoot, '.env'),
-  resolve(projectRoot, '../..', '.env'),
-]
+const candidateEnvPaths = [runtimeEnvPath, repoEnvPath]
 
 export function loadUpstreamEnv() {
   for (const envPath of candidateEnvPaths) {

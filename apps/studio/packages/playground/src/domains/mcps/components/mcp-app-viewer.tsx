@@ -69,7 +69,7 @@ export function McpAppViewer({
   // hostInfo MUST be memoized — it is a dependency of the bridge creation effect
   // in AppRenderer. A new object reference triggers bridge recreation → sandbox
   // timeout → toolInput never delivered.
-  const hostInfo = useMemo(() => ({ name: 'Mastra Studio', version: '1.0.0' }), []);
+  const hostInfo = useMemo(() => ({ name: 'Manifex Studio', version: '1.0.0' }), []);
 
   const normalizedToolResult: CallToolResult | undefined = useMemo(() => {
     if (toolResult === undefined) return undefined;

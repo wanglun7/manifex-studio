@@ -9,7 +9,7 @@ test.afterEach(async () => {
 test('has page title', async ({ page }) => {
   await page.goto('/request-context');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectCurrentBreadcrumb(page, 'Request Context');
 });
 

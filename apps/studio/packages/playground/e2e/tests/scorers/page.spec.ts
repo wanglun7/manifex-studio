@@ -8,7 +8,7 @@ test.afterEach(async () => {
 test('shows scorers in the evaluation dashboard', async ({ page }) => {
   await page.goto('/scorers');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expect(page.getByRole('searchbox', { name: 'Search scorers' })).toBeVisible();
   await expect(page.getByRole('link', { name: /Response Quality Scorer/i })).toBeVisible();
 });

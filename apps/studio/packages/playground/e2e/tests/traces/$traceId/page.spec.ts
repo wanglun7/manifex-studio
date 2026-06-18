@@ -30,7 +30,7 @@ test.afterEach(async () => {
 test('shows page title with trace id', async ({ page }) => {
   await page.goto(`/traces/${FAKE_TRACE_ID}`);
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectCurrentBreadcrumb(page, 'trace');
 });
 

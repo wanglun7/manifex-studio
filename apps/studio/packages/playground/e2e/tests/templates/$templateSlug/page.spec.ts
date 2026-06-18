@@ -9,7 +9,7 @@ test('has breadcrumb navigation', async ({ page }) => {
   // Use a mock template slug - the page should still render breadcrumbs
   await page.goto('/templates/test-template');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
 
   const breadcrumb = page.locator('nav a:has-text("Templates")').first();
   await expect(breadcrumb).toHaveAttribute('href', '/templates');

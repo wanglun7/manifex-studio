@@ -44,6 +44,12 @@ type ThreadSandboxManagerOptions = {
   containerPrefix: string
 }
 
+type SandboxInvalidationReason = 'stopped' | 'removed'
+type SandboxInvalidationHandler = (
+  threadId: string,
+  reason: SandboxInvalidationReason,
+) => void
+
 function now() {
   return Date.now()
 }
@@ -58,11 +64,19 @@ export class ThreadSandboxManager {
   private loadPromise: Promise<void> | undefined
   private timer: ReturnType<typeof setInterval> | undefined
   private persistQueue = Promise.resolve()
+  private invalidationHandlers = new Set<SandboxInvalidationHandler>()
 
   constructor(private readonly options: ThreadSandboxManagerOptions) {}
 
   get enabled() {
     return this.options.enabled
+  }
+
+  onInvalidate(handler: SandboxInvalidationHandler) {
+    this.invalidationHandlers.add(handler)
+    return () => {
+      this.invalidationHandlers.delete(handler)
+    }
   }
 
   async load() {
@@ -157,6 +171,7 @@ export class ThreadSandboxManager {
       if (isPositiveFinite(this.options.removeAfterMs) && idleMs >= this.options.removeAfterMs) {
         await this.removeContainer(name)
         this.markRemoved(threadId, timestamp)
+        this.invalidate(threadId, 'removed')
         continue
       }
 
@@ -167,6 +182,7 @@ export class ThreadSandboxManager {
       ) {
         await this.stopContainer(name)
         this.markStopped(threadId, timestamp)
+        this.invalidate(threadId, 'stopped')
       }
     }
 
@@ -206,6 +222,16 @@ export class ThreadSandboxManager {
     const record = this.records.get(threadId)
     if (!record) return
     record.lastRemovedAt = timestamp
+  }
+
+  private invalidate(threadId: string, reason: SandboxInvalidationReason) {
+    for (const handler of this.invalidationHandlers) {
+      try {
+        handler(threadId, reason)
+      } catch (error) {
+        console.warn('[sandbox-manager] cache invalidation failed:', error)
+      }
+    }
   }
 
   private async persist() {

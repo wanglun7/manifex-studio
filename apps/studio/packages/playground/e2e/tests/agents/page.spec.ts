@@ -9,7 +9,7 @@ test.afterEach(async () => {
 test('has overall information', async ({ page }) => {
   await page.goto('/agents');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectCurrentBreadcrumb(page, 'Agents');
   await expectRouteDocsLink(page, 'Agents documentation', 'https://mastra.ai/en/docs/agents/overview');
 

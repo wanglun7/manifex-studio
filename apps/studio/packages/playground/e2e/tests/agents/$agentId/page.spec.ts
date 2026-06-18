@@ -10,7 +10,7 @@ test('overall layout information', async ({ page }) => {
   await page.goto('/agents/weather-agent/chat/1234');
 
   // Header
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectRouteDocsLink(page, 'Agents documentation', 'https://mastra.ai/en/docs/agents/overview');
   const breadcrumb = page.locator('header>nav');
   expect(breadcrumb).toMatchAriaSnapshot();

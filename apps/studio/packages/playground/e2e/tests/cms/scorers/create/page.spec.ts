@@ -99,7 +99,7 @@ test.describe('Page Structure & Initial State', () => {
   test('displays page title and header correctly', async ({ page }) => {
     await page.goto('/cms/scorers/create');
 
-    await expect(page).toHaveTitle(/Mastra Studio/);
+    await expect(page).toHaveTitle(/Manifex Studio/);
     await expectCurrentBreadcrumb(page, 'Create scorer');
   });
 

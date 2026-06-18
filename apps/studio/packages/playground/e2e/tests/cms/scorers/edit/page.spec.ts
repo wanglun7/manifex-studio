@@ -138,7 +138,7 @@ test.describe('Page Structure & Initial State', () => {
 
     await goToEditPage(page, scorerId);
 
-    await expect(page).toHaveTitle(/Mastra Studio/);
+    await expect(page).toHaveTitle(/Manifex Studio/);
     await expectCurrentBreadcrumb(page, scorerName);
   });
 

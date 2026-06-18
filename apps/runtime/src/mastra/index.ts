@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { mkdirSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { Mastra } from '@mastra/core/mastra'
 import {
   MASTRA_RESOURCE_ID_KEY,
@@ -20,29 +19,9 @@ import {
 } from './agents/full-access-agent.js'
 import { manifexArtifactRoutes } from './manifex-artifacts.js'
 import { searchMcpClient } from './mcp/search-mcp.js'
+import { artifactsRoot, mastraStudioArtifactsRoot, runtimeRoot } from './paths.js'
 
-const here = dirname(fileURLToPath(import.meta.url))
-
-function findProjectRoot(start: string) {
-  let current = start
-  for (let i = 0; i < 10; i += 1) {
-    if (
-      existsSync(resolve(current, 'package.json')) &&
-      existsSync(resolve(current, 'src/mastra'))
-    ) {
-      return current
-    }
-    const parent = resolve(current, '..')
-    if (parent === current) break
-    current = parent
-  }
-  return resolve(start, '../..')
-}
-
-const projectRoot = findProjectRoot(here)
-const artifactsRoot = resolve(projectRoot, 'artifacts')
-
-mkdirSync(resolve(artifactsRoot, 'mastra-studio'), { recursive: true })
+mkdirSync(mastraStudioArtifactsRoot, { recursive: true })
 
 await fullAccessWorkspace.init()
 await feishuWorkspace.init()
@@ -86,7 +65,7 @@ export const mastra = new Mastra({
   }),
   editor: new MastraEditor({
     source: 'code',
-    codePath: resolve(projectRoot, 'src/mastra/editor'),
+    codePath: resolve(runtimeRoot, 'src/mastra/editor'),
   }),
   observability: new Observability({
     configs: {

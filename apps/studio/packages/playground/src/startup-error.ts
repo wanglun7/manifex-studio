@@ -28,7 +28,7 @@ export function renderStartupError(
     'min-height:100vh;background:#0b0d10;color:#f4f4f5;font-family:"Mona Sans",ui-sans-serif,system-ui,sans-serif;font-feature-settings:"ss06" on;padding:32px;box-sizing:border-box;';
 
   const title = document.createElement('h1');
-  title.textContent = 'Mastra Studio failed to start';
+  title.textContent = 'Manifex Studio failed to start';
   title.style.cssText = 'font-size:20px;line-height:1.4;margin:0 0 8px;';
 
   const detail = document.createElement('p');

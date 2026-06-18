@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
 
 test('overall layout information', async ({ page }) => {
   // Header
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectRouteDocsLink(page, 'Workflows documentation', 'https://mastra.ai/en/docs/workflows/overview');
   const breadcrumb = page.locator('header>nav');
   expect(breadcrumb).toMatchAriaSnapshot();

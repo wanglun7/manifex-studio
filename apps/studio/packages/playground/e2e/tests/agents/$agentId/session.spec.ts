@@ -16,12 +16,12 @@ test.describe('session page - layout', () => {
     await page.goto('/agents/weather-agent/session/1234');
 
     // ASSERT: Page loads with correct title
-    await expect(page).toHaveTitle(/Mastra Studio/);
+    await expect(page).toHaveTitle(/Manifex Studio/);
 
     // ASSERT: Header with Mastra logo and studio title is visible
     await expect(page.locator('header')).toBeVisible();
     await expect(page.locator('header').locator('svg')).toBeVisible();
-    await expect(page.locator('header').locator('text=Mastra Studio')).toBeVisible();
+    await expect(page.locator('header').locator('text=Manifex Studio')).toBeVisible();
 
     // ASSERT: Chat composer is visible (the message input area)
     await expect(page.getByPlaceholder('Enter your message...')).toBeVisible();

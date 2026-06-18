@@ -126,7 +126,7 @@ export function LoginPage({ redirectUri, onSuccess, initialMode = 'signin', erro
 
   return (
     <LoginLayout
-      title={isSignIn ? 'Sign in to Mastra Studio' : 'Create your account'}
+      title={isSignIn ? 'Sign in to Manifex Studio' : 'Create your account'}
       description={description}
       errorBanner={errorBanner}
     >

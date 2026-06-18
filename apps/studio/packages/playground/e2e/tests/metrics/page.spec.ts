@@ -9,7 +9,7 @@ test.afterEach(async () => {
 test('renders metrics dashboard with title and date preset', async ({ page }) => {
   await page.goto('/metrics');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectCurrentBreadcrumb(page, 'Metrics');
   await expect(page.getByRole('button', { name: 'Last 24 hours' })).toBeVisible();
 });

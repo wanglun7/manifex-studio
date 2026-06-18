@@ -4,6 +4,6 @@ try {
   const { startStudio } = await import('./main');
   startStudio();
 } catch (error) {
-  console.error('Mastra Studio failed to start', error);
+  console.error('Manifex Studio failed to start', error);
   renderStartupError(error);
 }

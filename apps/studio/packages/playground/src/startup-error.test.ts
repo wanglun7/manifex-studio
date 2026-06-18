@@ -12,7 +12,7 @@ describe('renderStartupError', () => {
 
     renderStartupError(new Error('broken import'), { showDetails: true });
 
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain('Mastra Studio failed to start');
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('Manifex Studio failed to start');
     expect(document.querySelector('pre')?.textContent).toContain('broken import');
   });
 

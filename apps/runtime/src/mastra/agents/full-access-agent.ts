@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { mkdirSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { Agent } from '@mastra/core/agent'
 import {
   MASTRA_RESOURCE_ID_KEY,
@@ -19,30 +18,12 @@ import { DockerSandbox } from '@mastra/docker'
 import { createDashScopeEmbedder } from '../dashscope-embedder.js'
 import { loadUpstreamEnv, optionalEnv, requiredEnv } from '../env.js'
 import { searchMcpClient, searchProviderInstructions } from '../mcp/search-mcp.js'
+import { artifactsRoot, mastraStudioArtifactsRoot, repoRoot, runtimeRoot } from '../paths.js'
 import { createThreadSandboxManager } from '../sandbox/thread-sandbox-manager.js'
 
 loadUpstreamEnv()
-const here = dirname(fileURLToPath(import.meta.url))
 
-function findProjectRoot(start: string) {
-  let current = start
-  for (let i = 0; i < 10; i += 1) {
-    if (
-      existsSync(resolve(current, 'package.json')) &&
-      existsSync(resolve(current, 'src/mastra'))
-    ) {
-      return current
-    }
-    const parent = resolve(current, '..')
-    if (parent === current) break
-    current = parent
-  }
-  return resolve(start, '../../..')
-}
-
-const projectRoot = findProjectRoot(here)
-const artifactsRoot = resolve(projectRoot, 'artifacts')
-mkdirSync(resolve(artifactsRoot, 'mastra-studio'), { recursive: true })
+mkdirSync(mastraStudioArtifactsRoot, { recursive: true })
 
 const dashScopeApiKey = optionalEnv('DASHSCOPE_API_KEY')
 const embeddingModel = optionalEnv('EMBEDDING_MODEL') || 'text-embedding-v4'
@@ -60,7 +41,7 @@ const workspaceSandboxProvider = optionalEnv('WORKSPACE_SANDBOX_PROVIDER') || 'l
 const useDockerSandbox = workspaceSandboxProvider === 'docker'
 const dockerImage = optionalEnv('WORKSPACE_DOCKER_IMAGE') || 'manifex-agent-runtime:latest'
 const threadWorkspaceRoot = resolve(
-  projectRoot,
+  repoRoot,
   optionalEnv('WORKSPACE_THREAD_ROOT') || 'artifacts/docker-thread-workspaces',
 )
 const dockerMemoryBytes = Number(optionalEnv('WORKSPACE_DOCKER_MEMORY_BYTES') || 2 * 1024 * 1024 * 1024)
@@ -252,10 +233,10 @@ const dockerWorkspaceConfig = {
 function createLocalWorkspaceConfig() {
   return {
     filesystem: new LocalFilesystem({
-      basePath: projectRoot,
+      basePath: repoRoot,
     }),
     sandbox: new LocalSandbox({
-      workingDirectory: projectRoot,
+      workingDirectory: repoRoot,
     }),
     lsp: true,
   }
@@ -270,7 +251,7 @@ function createWorkspace(config: {
     ? {
         skills: config.skills,
         skillSource: new LocalSkillSource({
-          basePath: projectRoot,
+          basePath: runtimeRoot,
         }),
       }
     : {}
@@ -299,6 +280,11 @@ export const feishuWorkspace = createWorkspace({
   id: 'feishu-workspace',
   name: 'Feishu',
   skills: ['lark-skills'],
+})
+
+threadSandboxManager.onInvalidate((threadId) => {
+  fullAccessWorkspace.clearSandboxCache(threadId)
+  feishuWorkspace.clearSandboxCache(threadId)
 })
 
 const searchTools = await searchMcpClient.listTools()

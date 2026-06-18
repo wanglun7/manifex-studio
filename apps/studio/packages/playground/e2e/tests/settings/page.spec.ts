@@ -13,7 +13,7 @@ test.afterEach(async () => {
 test('has page title', async ({ page }) => {
   await page.goto('/settings');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
   await expectCurrentBreadcrumb(page, 'Settings');
 });
 

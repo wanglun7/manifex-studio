@@ -9,7 +9,7 @@ test.afterEach(async () => {
 test('has breadcrumb navigation', async ({ page }) => {
   await page.goto('/processors/logging-processor');
 
-  await expect(page).toHaveTitle(/Mastra Studio/);
+  await expect(page).toHaveTitle(/Manifex Studio/);
 
   await expectBreadcrumbLink(page, 'Processors', '/processors');
 });

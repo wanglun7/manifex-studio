@@ -47,7 +47,7 @@ const MobileFrame = ({ children }: { children: React.ReactNode }) => (
   <div className="flex flex-col h-screen w-screen bg-surface1 overflow-hidden">
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border1 px-3">
       <MainSidebar.MobileTrigger />
-      <span className="text-neutral6 text-sm font-medium">Mastra Studio</span>
+      <span className="text-neutral6 text-sm font-medium">Manifex Studio</span>
     </header>
     {children}
     <div className="flex-1 min-w-0 p-4">
