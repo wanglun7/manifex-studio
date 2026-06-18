@@ -1,0 +1,28 @@
+{
+  "name": "e2e-studio",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "start": "mastra start"
+  },
+  "dependencies": {
+    "@mastra/core": "latest",
+    "@mastra/editor": "latest",
+    "@mastra/libsql": "latest",
+    "@mastra/loggers": "latest",
+    "@mastra/mcp": "latest",
+    "@mastra/memory": "latest",
+    "ai": "^5.0.196",
+    "mastra": "latest",
+    "msw": "^2.14.6",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.20",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@11.5.1"
+}

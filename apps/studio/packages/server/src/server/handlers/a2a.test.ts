@@ -1,0 +1,2601 @@
+import * as crypto from 'node:crypto';
+import { openai } from '@ai-sdk/openai';
+import type { Task, MessageSendParams } from '@mastra/core/a2a';
+import { MastraA2AError } from '@mastra/core/a2a';
+import type { AgentConfig } from '@mastra/core/agent';
+import { Agent } from '@mastra/core/agent';
+import { Mastra } from '@mastra/core/mastra';
+import { RequestContext } from '@mastra/core/request-context';
+import type { MastraStorage } from '@mastra/core/storage';
+import canonicalize from 'canonicalize';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DefaultPushNotificationSender, DEFAULT_PUSH_NOTIFICATION_TOKEN_HEADER } from '../a2a/push-notification-sender';
+import { InMemoryPushNotificationStore } from '../a2a/push-notification-store';
+import { InMemoryTaskStore } from '../a2a/store';
+import {
+  AGENT_EXECUTION_ROUTE,
+  GET_AGENT_CARD_ROUTE,
+  getAgentCardByIdHandler,
+  getAgentExecutionHandler,
+  handleTaskGet,
+  handleMessageSend,
+  handleMessageStream,
+  handleTaskCancel,
+} from './a2a';
+
+class MockAgent extends Agent {
+  constructor(config: AgentConfig) {
+    super(config);
+
+    this.generate = vi.fn();
+    this.stream = vi.fn();
+    this.__updateInstructions = vi.fn();
+  }
+
+  generate(args: any) {
+    return this.generate(args);
+  }
+
+  stream(args: any) {
+    return this.stream(args);
+  }
+
+  __updateInstructions(args: any) {
+    return this.__updateInstructions(args);
+  }
+}
+
+function createMockMastra(agents: Record<string, Agent>) {
+  return new Mastra({
+    logger: false,
+    agents: agents,
+    storage: {
+      init: vi.fn(),
+      __setLogger: vi.fn(),
+      getEvalsByAgentName: vi.fn(),
+      getStorage: () => {
+        return {
+          getEvalsByAgentName: vi.fn(),
+        };
+      },
+    } as unknown as MastraStorage,
+  });
+}
+
+function createStreamResult({
+  chunks,
+  text,
+  object,
+  streamEvents,
+  toolCalls = [],
+  toolResults = [],
+  usage = undefined,
+  finishReason = 'stop',
+}: {
+  chunks: string[];
+  text?: string;
+  object?: Record<string, unknown>;
+  streamEvents?: unknown[];
+  toolCalls?: unknown[];
+  toolResults?: unknown[];
+  usage?: unknown;
+  finishReason?: string;
+}) {
+  const fullStreamEvents = streamEvents ?? [
+    ...chunks.map(chunk => ({ type: 'text-delta', textDelta: chunk })),
+    ...(object ? [{ type: 'object-result', object }] : []),
+  ];
+
+  return {
+    textStream: (async function* () {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    })(),
+    fullStream: (async function* () {
+      for (const event of fullStreamEvents) {
+        yield event;
+      }
+    })(),
+    text: Promise.resolve(text ?? chunks.join('')),
+    object: Promise.resolve(object),
+    toolCalls: Promise.resolve(toolCalls),
+    toolResults: Promise.resolve(toolResults),
+    usage: Promise.resolve(usage),
+    finishReason: Promise.resolve(finishReason),
+  };
+}
+
+describe('A2A Handler', () => {
+  describe('getAgentCardByIdHandler', () => {
+    let mockMastra: Mastra;
+
+    beforeEach(() => {
+      const mockAgent = new MockAgent({
+        id: 'test-agent',
+        name: 'test-agent',
+        instructions: 'test instructions',
+        model: openai('gpt-4o'),
+      });
+
+      mockMastra = createMockMastra({
+        'test-agent': mockAgent,
+      });
+    });
+
+    it('should return the agent card', async () => {
+      const agentCard = await getAgentCardByIdHandler({
+        mastra: mockMastra,
+        requestContext: new RequestContext(),
+        agentId: 'test-agent',
+      });
+      expect(agentCard).toMatchInlineSnapshot(`
+        {
+          "additionalInterfaces": [],
+          "capabilities": {
+            "extensions": [],
+            "pushNotifications": false,
+            "stateTransitionHistory": false,
+            "streaming": true,
+          },
+          "defaultInputModes": [
+            "text/plain",
+          ],
+          "defaultOutputModes": [
+            "text/plain",
+          ],
+          "description": "test instructions",
+          "name": "test-agent",
+          "protocolVersion": "0.3.0",
+          "provider": {
+            "organization": "Mastra",
+            "url": "https://mastra.ai",
+          },
+          "security": [],
+          "securitySchemes": {},
+          "skills": [],
+          "supportsAuthenticatedExtendedCard": false,
+          "url": "/a2a/test-agent",
+          "version": "1.0",
+        }
+      `);
+    });
+
+    it('should allow custom execution URL', async () => {
+      const customUrl = '/custom/execution/url';
+      const agentCard = await getAgentCardByIdHandler({
+        mastra: mockMastra,
+        requestContext: new RequestContext(),
+        agentId: 'test-agent',
+        executionUrl: customUrl,
+      });
+      expect(agentCard.url).toBe(customUrl);
+    });
+
+    it('should allow custom provider details', async () => {
+      const customProvider = {
+        organization: 'Custom Org',
+        url: 'https://custom.org',
+      };
+      const agentCard = await getAgentCardByIdHandler({
+        mastra: mockMastra,
+        requestContext: new RequestContext(),
+        agentId: 'test-agent',
+        provider: customProvider,
+      });
+      expect(agentCard.provider).toEqual(customProvider);
+    });
+
+    it('should allow custom version', async () => {
+      const customVersion = '2.0';
+      const agentCard = await getAgentCardByIdHandler({
+        mastra: mockMastra,
+        requestContext: new RequestContext(),
+        agentId: 'test-agent',
+        version: customVersion,
+      });
+      expect(agentCard.version).toBe(customVersion);
+    });
+
+    it('should build an absolute execution url when request context is available', async () => {
+      const response = await GET_AGENT_CARD_ROUTE.handler({
+        mastra: mockMastra,
+        requestContext: new RequestContext(),
+        agentId: 'test-agent',
+        abortSignal: AbortSignal.abort(),
+        routePrefix: '/api',
+        request: new Request('http://localhost:4111/api/.well-known/test-agent/agent-card.json', {
+          headers: {
+            host: 'localhost:4111',
+          },
+        }),
+      } as any);
+
+      expect(response.url).toBe('http://localhost:4111/api/a2a/test-agent');
+      expect(response.capabilities.pushNotifications).toBe(true);
+    });
+
+    it('should sign the agent card when A2A signing is configured', async () => {
+      const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', {
+        namedCurve: 'P-256',
+      });
+      const privateJwk = privateKey.export({ format: 'jwk' });
+      mockMastra.setServer({
+        a2a: {
+          agentCardSigning: {
+            privateKey: privateJwk,
+            protectedHeader: {
+              alg: 'ES256',
+              kid: 'test-key',
+            },
+            header: {
+              issuer: 'mastra-test',
+            },
+          },
+        },
+      } as any);
+
+      const agentCard = await getAgentCardByIdHandler({
+        mastra: mockMastra,
+        requestContext: new RequestContext(),
+        agentId: 'test-agent',
+      });
+
+      expect(agentCard.signatures).toHaveLength(1);
+
+      const [signature] = agentCard.signatures!;
+      const unsignedCard = structuredClone(agentCard) as typeof agentCard & {
+        signatures?: typeof agentCard.signatures;
+      };
+      delete unsignedCard.signatures;
+      const canonicalPayload = canonicalize(unsignedCard);
+
+      expect(canonicalPayload).toBeTruthy();
+
+      const signingInput = `${signature.protected}.${Buffer.from(canonicalPayload!, 'utf8').toString('base64url')}`;
+      const verification = crypto.verify(
+        'sha256',
+        Buffer.from(signingInput, 'utf8'),
+        {
+          key: publicKey,
+          dsaEncoding: 'ieee-p1363',
+        },
+        Buffer.from(signature.signature, 'base64url'),
+      );
+
+      expect(verification).toBe(true);
+      expect(JSON.parse(Buffer.from(signature.protected, 'base64url').toString('utf8'))).toMatchObject({
+        alg: 'ES256',
+        kid: 'test-key',
+      });
+      expect(signature.header).toEqual({
+        issuer: 'mastra-test',
+      });
+    });
+  });
+
+  describe('handleMessageSend', () => {
+    let mockMastra: Mastra;
+    let mockTaskStore: InMemoryTaskStore;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      const mockAgent = new MockAgent({
+        id: 'test-agent',
+        name: 'test-agent',
+        instructions: 'test instructions',
+        model: openai('gpt-4o'),
+      });
+
+      mockMastra = createMockMastra({
+        'test-agent': mockAgent,
+      });
+
+      mockTaskStore = new InMemoryTaskStore();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should successfully process a task and save it', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+
+      const mockAgent = {
+        generate: vi.fn().mockResolvedValue({ text: agentResponseText }),
+      } as unknown as Agent;
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+      const requestContext = new RequestContext();
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      expect(result).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifacts: [
+            {
+              artifactId: expect.stringContaining(':response'),
+              name: 'response.txt',
+              parts: [
+                {
+                  text: 'Hello, user!',
+                  kind: 'text',
+                },
+              ],
+            },
+          ],
+          id: expect.any(String),
+          contextId: expect.any(String),
+          metadata: {
+            execution: {
+              toolCalls: undefined,
+              toolResults: undefined,
+              usage: undefined,
+              finishReason: undefined,
+            },
+          },
+          status: {
+            message: undefined,
+            state: 'completed',
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+          history: [
+            {
+              kind: 'message',
+              messageId: 'test-message-id',
+              parts: [
+                {
+                  text: 'Hello, agent!',
+                  kind: 'text',
+                },
+              ],
+              role: 'user',
+            },
+          ],
+          kind: 'task',
+        },
+      });
+    });
+
+    it('should accept file parts (FileWithUri + FileWithBytes) and pass them through to the converter', async () => {
+      // Regression test for the handler-level schema rejecting non-text parts.
+      // Pre-fix, params.message.parts was validated as `kind: z.enum(['text'])`
+      // which rejected `kind: 'file'` and `kind: 'data'` before convertToCoreMessage
+      // (which already handles all three) could see them.
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [
+            { kind: 'text', text: 'Please summarize the attached invoice.' },
+            {
+              kind: 'file',
+              file: { uri: 'https://example.com/invoice.pdf', mimeType: 'application/pdf', name: 'invoice.pdf' },
+            },
+            { kind: 'file', file: { bytes: 'AAAA', mimeType: 'image/png', name: 'screenshot.png' } },
+          ],
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: 'Summary attached.' });
+
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext: new RequestContext(),
+      });
+
+      // Validation passes — no JSON-RPC error returned.
+      expect('error' in result).toBe(false);
+
+      // convertToCoreMessage forwarded the file parts as CoreMessage `file` parts.
+      const generateArgs = (mockAgent.generate as ReturnType<typeof vi.fn>).mock.calls[0];
+      const coreMessages = generateArgs[0] as Array<{ role: string; content: Array<unknown> }>;
+      expect(coreMessages).toHaveLength(1);
+      expect(coreMessages[0].role).toBe('user');
+      expect(coreMessages[0].content).toEqual([
+        { type: 'text', text: 'Please summarize the attached invoice.' },
+        { type: 'file', data: new URL('https://example.com/invoice.pdf'), mimeType: 'application/pdf' },
+        { type: 'file', data: 'AAAA', mimeType: 'image/png' },
+      ]);
+    });
+
+    it('should reject parts with an unknown discriminator', async () => {
+      // The widened schema is still strict on the part kind — discriminatedUnion
+      // rejects anything other than text | file | data, matching the @a2a-js/sdk
+      // Part union exactly.
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+
+      const params = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'bogus', text: 'nope' }],
+        },
+      } as unknown as MessageSendParams;
+
+      const result = await getAgentExecutionHandler({
+        requestId,
+        mastra: mockMastra,
+        method: 'message/send',
+        params,
+        taskStore: mockTaskStore,
+        agentId,
+        requestContext: new RequestContext(),
+      });
+
+      expect('error' in result).toBe(true);
+      // -32602 is the JSON-RPC "invalid params" code that MastraA2AError.invalidParams produces.
+      // @ts-expect-error - error is present in the failure branch
+      expect(result.error.code).toBe(-32602);
+    });
+
+    it('should handle errors from agent.generate and save failed state', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Hello, agent!';
+      const errorMessage = 'Agent failed!';
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockRejectedValue is not available on the Agent class
+      mockAgent.generate.mockRejectedValue(new Error(errorMessage));
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext: new RequestContext(),
+      });
+
+      // Because the a2a spec requires the server to create the the taskId, we don't know the id
+      // to query the store with, so we just check the internal store directly
+      const store = Array.from((mockTaskStore as any).store.values());
+      expect(store.length).toBe(1);
+
+      const task = store[0] as Task;
+      expect(task?.status.state).toBe('failed');
+      // @ts-expect-error - error is not always available but we know it is
+      result.error.data.stack = result.error?.data.stack.split('\n')[0];
+      expect(result).toMatchInlineSnapshot(`
+        {
+          "error": {
+            "code": -32603,
+            "data": {
+              "stack": "Error: Agent failed!",
+            },
+            "message": "Agent failed!",
+          },
+          "id": "test-request-id",
+          "jsonrpc": "2.0",
+        }
+      `);
+    });
+
+    it('should pass contextId as threadId and agentId as resourceId to agent.generate for memory', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const contextId = 'test-context-id';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: userMessage }],
+          contextId, // Include contextId to test memory integration
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: agentResponseText });
+
+      const requestContext = new RequestContext();
+      await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify that agent.generate was called with threadId and resourceId (defaults to agentId)
+      expect(mockAgent.generate).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          threadId: contextId,
+          resourceId: agentId,
+        }),
+      );
+    });
+
+    it('should include structured output as a data artifact part', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Summarize this order';
+      const structured = {
+        summary: 'Order confirmed.',
+        total: 33.98,
+      };
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: 'Order confirmed.', object: structured });
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+      const requestContext = new RequestContext();
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      expect(result.result.artifacts).toEqual([
+        {
+          artifactId: expect.stringContaining(':response'),
+          name: 'response.json',
+          parts: [
+            { kind: 'text', text: 'Order confirmed.' },
+            { kind: 'data', data: structured },
+          ],
+        },
+      ]);
+    });
+
+    it('should allow user to pass resourceId via params metadata', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const contextId = 'test-context-id';
+      const customResourceId = 'custom-user-resource';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: userMessage }],
+          contextId,
+        },
+        metadata: {
+          resourceId: customResourceId, // User-provided resourceId
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: agentResponseText });
+
+      const requestContext = new RequestContext();
+      await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify that agent.generate was called with user-provided resourceId
+      expect(mockAgent.generate).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          threadId: contextId,
+          resourceId: customResourceId,
+        }),
+      );
+    });
+
+    it('should allow user to pass resourceId via message metadata', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const contextId = 'test-context-id';
+      const customResourceId = 'custom-message-resource';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: userMessage }],
+          contextId,
+          metadata: {
+            resourceId: customResourceId, // User-provided resourceId in message
+          },
+        },
+      };
+
+      const mockAgent = {
+        generate: vi.fn().mockResolvedValue({ text: agentResponseText }),
+      } as unknown as Agent;
+
+      const requestContext = new RequestContext();
+      await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify that agent.generate was called with user-provided resourceId from message
+      expect(mockAgent.generate).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          threadId: contextId,
+          resourceId: customResourceId,
+        }),
+      );
+    });
+
+    it('should prefer params metadata resourceId over message metadata resourceId', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const contextId = 'test-context-id';
+      const paramsResourceId = 'params-resource';
+      const messageResourceId = 'message-resource';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: userMessage }],
+          contextId,
+          metadata: {
+            resourceId: messageResourceId,
+          },
+        },
+        metadata: {
+          resourceId: paramsResourceId, // Should take precedence
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: agentResponseText });
+
+      const requestContext = new RequestContext();
+      await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify that params metadata resourceId takes precedence
+      expect(mockAgent.generate).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          threadId: contextId,
+          resourceId: paramsResourceId,
+        }),
+      );
+    });
+
+    it('should allow user to pass custom resourceId via params metadata', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const contextId = 'test-context-id';
+      const customResourceId = 'custom-user-resource-id';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: userMessage }],
+          contextId,
+        },
+        metadata: {
+          resourceId: customResourceId, // User-provided resourceId
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: agentResponseText });
+
+      const requestContext = new RequestContext();
+      await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify that agent.generate was called with the custom resourceId
+      expect(mockAgent.generate).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          threadId: contextId,
+          resourceId: customResourceId,
+        }),
+      );
+    });
+
+    it('should allow user to pass custom resourceId via message metadata', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const contextId = 'test-context-id';
+      const customResourceId = 'message-level-resource-id';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: userMessage }],
+          contextId,
+          metadata: {
+            resourceId: customResourceId, // User-provided resourceId at message level
+          },
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: agentResponseText });
+
+      const requestContext = new RequestContext();
+      await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify that agent.generate was called with the custom resourceId
+      expect(mockAgent.generate).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          threadId: contextId,
+          resourceId: customResourceId,
+        }),
+      );
+    });
+
+    it('should not pass threadId/resourceId when contextId is not provided', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: userMessage }],
+          // No contextId
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: agentResponseText });
+
+      const requestContext = new RequestContext();
+      await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify that agent.generate was NOT called with threadId/resourceId
+      expect(mockAgent.generate).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.not.objectContaining({
+          threadId: expect.any(String),
+        }),
+      );
+    });
+
+    it('should update an existing task and append new message/history', async () => {
+      const requestId = 'test-request-id';
+      const taskId = 'test-task-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Follow-up message!';
+      const agentResponseText = 'Follow-up response!';
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+      // Existing task/history
+
+      const existingTask: Task = {
+        id: taskId,
+        contextId: 'test-session-id',
+        status: {
+          state: 'completed' as const,
+          message: {
+            messageId,
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Old response' }],
+          },
+          timestamp: new Date('2025-05-07T12:00:00.000Z').toISOString(),
+        },
+        artifacts: [],
+        history: [
+          {
+            kind: 'message',
+            messageId: 'test-history-message',
+            role: 'user',
+            parts: [{ kind: 'text', text: 'Old message' }],
+          },
+          {
+            kind: 'message',
+            messageId: 'test-history-response',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Old response' }],
+          },
+        ],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      // Use real InMemoryTaskStore
+      await mockTaskStore.save({ agentId, data: existingTask });
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: agentResponseText });
+      vi.setSystemTime(new Date('2025-05-08T12:00:00.000Z'));
+
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agentId,
+        agent: mockAgent,
+        requestContext: new RequestContext(),
+      });
+
+      const task = await mockTaskStore.load({ agentId, taskId });
+      expect(task?.status.state).toBe('completed');
+      expect(result?.result?.status.timestamp).not.toBe(existingTask.status.timestamp);
+      expect(result).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifacts: [
+            {
+              artifactId: expect.stringContaining(':response'),
+              name: 'response.txt',
+              parts: [
+                {
+                  text: 'Follow-up response!',
+                  kind: 'text',
+                },
+              ],
+            },
+          ],
+          id: expect.any(String),
+          contextId: expect.any(String),
+          history: [
+            {
+              kind: 'message',
+              messageId: 'test-message-id',
+              parts: [
+                {
+                  kind: 'text',
+                  text: 'Follow-up message!',
+                },
+              ],
+              role: 'user',
+            },
+          ],
+          metadata: {
+            execution: {
+              toolCalls: undefined,
+              toolResults: undefined,
+              usage: undefined,
+              finishReason: undefined,
+            },
+          },
+          status: {
+            message: undefined,
+            state: 'completed',
+            timestamp: '2025-05-08T12:00:00.000Z',
+          },
+          kind: 'task',
+        },
+      });
+    });
+
+    it('should store execution details (toolCalls, toolResults, usage) in task metadata', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Create a chart';
+      const agentResponseText = 'Here is your chart';
+
+      const mockExecutionData = {
+        text: agentResponseText,
+        toolCalls: [
+          {
+            toolCallId: 'call_123',
+            toolName: 'createChart',
+            args: { data: 'sales data' },
+          },
+        ],
+        toolResults: [
+          {
+            toolCallId: 'call_123',
+            toolName: 'createChart',
+            result: { chartUrl: 'https://example.com/chart.png' },
+          },
+        ],
+        usage: {
+          promptTokens: 150,
+          completionTokens: 200,
+          totalTokens: 350,
+        },
+        finishReason: 'stop',
+      };
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue(mockExecutionData);
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+      const requestContext = new RequestContext();
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify the execution metadata is stored
+      expect(result.result?.metadata).toEqual({
+        execution: {
+          toolCalls: mockExecutionData.toolCalls,
+          toolResults: mockExecutionData.toolResults,
+          usage: mockExecutionData.usage,
+          finishReason: mockExecutionData.finishReason,
+        },
+      });
+
+      // Verify the task was saved with the metadata
+      const taskId = result.result?.id;
+      if (!taskId) {
+        throw new Error('Task ID is required');
+      }
+      const savedTask = await mockTaskStore.load({ agentId, taskId });
+      expect(savedTask?.metadata).toEqual({
+        execution: {
+          toolCalls: mockExecutionData.toolCalls,
+          toolResults: mockExecutionData.toolResults,
+          usage: mockExecutionData.usage,
+          finishReason: mockExecutionData.finishReason,
+        },
+      });
+    });
+
+    it('should preserve existing metadata when adding execution details', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Hello';
+      const agentResponseText = 'Hi there';
+
+      const existingMetadata = {
+        customField: 'custom value',
+        anotherField: 123,
+      };
+
+      const mockExecutionData = {
+        text: agentResponseText,
+        toolCalls: [],
+        toolResults: [],
+        usage: {
+          promptTokens: 10,
+          completionTokens: 20,
+          totalTokens: 30,
+        },
+        finishReason: 'stop',
+      };
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+        metadata: existingMetadata,
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue(mockExecutionData);
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+      const requestContext = new RequestContext();
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agent: mockAgent,
+        agentId,
+        requestContext,
+      });
+
+      // Verify both existing metadata and execution metadata are present
+      expect(result.result?.metadata).toEqual({
+        ...existingMetadata,
+        execution: {
+          toolCalls: mockExecutionData.toolCalls,
+          toolResults: mockExecutionData.toolResults,
+          usage: mockExecutionData.usage,
+          finishReason: mockExecutionData.finishReason,
+        },
+      });
+    });
+
+    it('should persist push notification config from message/send and deliver on completion', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const taskId = 'push-task-id';
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+      const pushNotificationStore = new InMemoryPushNotificationStore();
+      const pushNotificationSender = new DefaultPushNotificationSender(pushNotificationStore, {
+        fetch: fetchMock,
+        lookup: vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
+      });
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          taskId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: 'Notify me when done' }],
+        },
+        configuration: {
+          pushNotificationConfig: {
+            url: 'https://example.com/webhook',
+            token: 'notification-token',
+          },
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: 'Done.' });
+
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+        pushNotificationSender,
+        agent: mockAgent,
+        agentId,
+        requestContext: new RequestContext(),
+      });
+
+      expect(result.result?.status.state).toBe('completed');
+
+      const storedConfig = pushNotificationStore.get({
+        agentId,
+        params: { id: taskId },
+      });
+      expect(storedConfig).toEqual({
+        taskId,
+        pushNotificationConfig: {
+          id: taskId,
+          token: 'notification-token',
+          url: 'https://example.com/webhook',
+        },
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://93.184.216.34/webhook',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.any(Headers),
+          body: expect.any(String),
+        }),
+      );
+
+      const [, requestInit] = fetchMock.mock.calls[0]!;
+      expect((requestInit!.headers as Headers).get('host')).toBe('example.com');
+      expect((requestInit!.headers as Headers).get(DEFAULT_PUSH_NOTIFICATION_TOKEN_HEADER)).toBe('notification-token');
+      expect(JSON.parse(requestInit!.body as string)).toMatchObject({
+        id: taskId,
+        status: {
+          state: 'completed',
+        },
+      });
+    });
+
+    it('should not fail the request when push notification delivery fails', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const taskId = 'push-task-id';
+      const fetchMock = vi.fn().mockRejectedValue(new Error('Webhook unavailable'));
+      const pushNotificationStore = new InMemoryPushNotificationStore();
+      const pushNotificationSender = new DefaultPushNotificationSender(pushNotificationStore, {
+        fetch: fetchMock,
+        lookup: vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]),
+      });
+      const logger = {
+        error: vi.fn(),
+      } as any;
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          taskId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: 'Notify me when done' }],
+        },
+        configuration: {
+          pushNotificationConfig: {
+            url: 'https://example.com/webhook',
+          },
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: 'Done.' });
+
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+        pushNotificationSender,
+        agent: mockAgent,
+        agentId,
+        logger,
+        requestContext: new RequestContext(),
+      });
+
+      expect(result.result?.status.state).toBe('completed');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(logger.error).toHaveBeenCalledWith('Failed to deliver A2A push notification', expect.any(Error));
+      });
+    });
+
+    it('uses a provided push notification store even when no sender is passed', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const taskId = 'push-task-id';
+      const pushNotificationStore = new InMemoryPushNotificationStore();
+      const logger = {
+        error: vi.fn(),
+      } as any;
+
+      const params: MessageSendParams = {
+        message: {
+          messageId,
+          taskId,
+          kind: 'message',
+          role: 'user',
+          parts: [{ kind: 'text', text: 'Notify me when done' }],
+        },
+        configuration: {
+          pushNotificationConfig: {
+            url: 'http://localhost:9999/webhook',
+          },
+        },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.generate.mockResolvedValue({ text: 'Done.' });
+
+      const result = await handleMessageSend({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+        agent: mockAgent,
+        agentId,
+        logger,
+        requestContext: new RequestContext(),
+      });
+
+      expect(result.result?.status.state).toBe('completed');
+      expect(
+        pushNotificationStore.get({
+          agentId,
+          params: { id: taskId },
+        }),
+      ).toEqual({
+        taskId,
+        pushNotificationConfig: {
+          id: taskId,
+          url: 'http://localhost:9999/webhook',
+        },
+      });
+
+      await vi.waitFor(() => {
+        expect(logger.error).toHaveBeenCalledWith('Failed to deliver A2A push notification', expect.any(Error));
+      });
+    });
+  });
+
+  describe('handleMessageStream', () => {
+    let mockMastra: Mastra;
+    let mockTaskStore: InMemoryTaskStore;
+
+    beforeEach(() => {
+      const mockAgent = new MockAgent({
+        id: 'test-agent',
+        name: 'test-agent',
+        instructions: 'test instructions',
+        model: openai('gpt-4o'),
+      });
+      mockMastra = createMockMastra({ 'test-agent': mockAgent });
+      mockTaskStore = new InMemoryTaskStore();
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should yield working state and then completed result', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Hello, agent!';
+      const agentResponseText = 'Hello, user!';
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.stream.mockResolvedValue(
+        createStreamResult({
+          chunks: [agentResponseText],
+        }),
+      );
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+
+      const gen = handleMessageStream({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agentId,
+        agent: mockAgent,
+        requestContext: new RequestContext(),
+      });
+
+      const first = await gen.next();
+      expect(first.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifacts: [],
+          contextId: expect.any(String),
+          history: [
+            {
+              kind: 'message',
+              messageId: 'test-message-id',
+              parts: [{ kind: 'text', text: 'Hello, agent!' }],
+              role: 'user',
+            },
+          ],
+          id: expect.any(String),
+          kind: 'task',
+          metadata: undefined,
+          status: {
+            message: {
+              kind: 'message',
+              messageId: expect.any(String),
+              parts: [{ kind: 'text', text: 'Generating response...' }],
+              role: 'agent',
+            },
+            state: 'working',
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+        },
+      });
+
+      const second = await gen.next();
+      expect(second.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifact: {
+            artifactId: expect.stringContaining(':response'),
+            name: 'response.txt',
+            parts: [
+              {
+                text: 'Hello, user!',
+                kind: 'text',
+              },
+            ],
+          },
+          contextId: first.value?.result.contextId,
+          kind: 'artifact-update',
+          lastChunk: true,
+          taskId: first.value?.result.id,
+        },
+      });
+      expect(second.done).toBe(false);
+
+      const third = await gen.next();
+      expect(third.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          contextId: first.value?.result.contextId,
+          final: true,
+          kind: 'status-update',
+          status: {
+            message: undefined,
+            state: 'completed',
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+          taskId: first.value?.result.id,
+        },
+      });
+      expect(third.done).toBe(false);
+
+      const done = await gen.next();
+      expect(done.done).toBe(true);
+    });
+
+    it('should yield working state and then error if agent fails', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Hello, agent!';
+      const errorMessage = 'Agent failed!';
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockRejectedValue is not available on the Agent class
+      mockAgent.stream.mockRejectedValue(new Error(errorMessage));
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+
+      const gen = handleMessageStream({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agentId,
+        agent: mockAgent,
+        requestContext: new RequestContext(),
+      });
+
+      const first = await gen.next();
+      expect(first.value).toMatchObject({
+        id: requestId,
+        jsonrpc: '2.0',
+        result: {
+          kind: 'task',
+          status: {
+            state: 'working',
+            message: {
+              role: 'agent',
+              parts: [{ kind: 'text', text: 'Generating response...' }],
+            },
+          },
+        },
+      });
+
+      const second = await gen.next();
+      expect(second.value).toMatchObject({
+        id: requestId,
+        jsonrpc: '2.0',
+        result: {
+          final: true,
+          kind: 'status-update',
+          status: {
+            state: 'failed',
+            message: {
+              parts: [{ kind: 'text', text: `Handler failed: ${errorMessage}` }],
+            },
+          },
+        },
+      });
+      expect(second.done).toBe(false);
+
+      const done = await gen.next();
+      expect(done.done).toBe(true);
+    });
+
+    it('should stream structured output as a data artifact part', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+      const userMessage = 'Summarize this order';
+      const structured = {
+        summary: 'Order confirmed.',
+        total: 33.98,
+      };
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: userMessage }] },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.stream.mockResolvedValue(
+        createStreamResult({
+          chunks: ['Order confirmed.'],
+          object: structured,
+        }),
+      );
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+
+      const gen = handleMessageStream({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agentId,
+        agent: mockAgent,
+        requestContext: new RequestContext(),
+      });
+
+      const first = await gen.next();
+      expect(first.value?.result.kind).toBe('task');
+
+      const second = await gen.next();
+      expect(second.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifact: {
+            artifactId: expect.stringContaining(':response:text'),
+            name: 'response.txt',
+            parts: [
+              {
+                text: 'Order confirmed.',
+                kind: 'text',
+              },
+            ],
+          },
+          contextId: first.value?.result.contextId,
+          kind: 'artifact-update',
+          lastChunk: false,
+          taskId: first.value?.result.id,
+        },
+      });
+      expect(second.done).toBe(false);
+
+      const third = await gen.next();
+      expect(third.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifact: {
+            artifactId: expect.stringContaining(':response:data'),
+            name: 'response.json',
+            parts: [
+              {
+                kind: 'data',
+                data: structured,
+              },
+            ],
+          },
+          contextId: first.value?.result.contextId,
+          kind: 'artifact-update',
+          lastChunk: true,
+          taskId: first.value?.result.id,
+        },
+      });
+      expect(third.done).toBe(false);
+    });
+
+    it('should stream text chunks as incremental artifact updates', async () => {
+      const requestId = 'test-request-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+
+      const params: MessageSendParams = {
+        message: { messageId, kind: 'message', role: 'user', parts: [{ kind: 'text', text: 'Hello' }] },
+      };
+
+      const mockAgent = mockMastra.getAgentById(agentId);
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.stream.mockResolvedValue(
+        createStreamResult({
+          chunks: ['Hello, ', 'user!'],
+        }),
+      );
+
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+
+      const gen = handleMessageStream({
+        requestId,
+        params,
+        taskStore: mockTaskStore,
+        agentId,
+        agent: mockAgent,
+        requestContext: new RequestContext(),
+      });
+
+      const first = await gen.next();
+      expect(first.value?.result.kind).toBe('task');
+
+      const second = await gen.next();
+      expect(second.value).toMatchObject({
+        id: requestId,
+        jsonrpc: '2.0',
+        result: {
+          kind: 'artifact-update',
+          lastChunk: false,
+          artifact: {
+            name: 'response.txt',
+            parts: [{ kind: 'text', text: 'Hello, ' }],
+          },
+        },
+      });
+
+      const third = await gen.next();
+      expect(third.value).toMatchObject({
+        id: requestId,
+        jsonrpc: '2.0',
+        result: {
+          kind: 'artifact-update',
+          lastChunk: true,
+          artifact: {
+            name: 'response.txt',
+            parts: [{ kind: 'text', text: 'user!' }],
+          },
+        },
+      });
+    });
+  });
+
+  describe('handleTaskGet', () => {
+    it('should return the task', async () => {
+      const requestId = 'test-request-id';
+      const taskId = 'test-task-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+
+      const mockTaskStore = new InMemoryTaskStore();
+      const task: Task = {
+        id: taskId,
+        contextId: 'test-session-id',
+        status: {
+          state: 'completed',
+          message: {
+            messageId,
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Hello, user!' }],
+          },
+          timestamp: new Date('2025-05-08T11:47:38.458Z').toISOString(),
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+      await mockTaskStore.save({ agentId, data: task });
+
+      const result = await handleTaskGet({
+        requestId,
+        taskStore: mockTaskStore,
+        agentId,
+        taskId,
+      });
+
+      expect(result!.result).toEqual(task);
+      expect(result).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifacts: [],
+          id: 'test-task-id',
+          contextId: expect.any(String),
+          metadata: undefined,
+          status: {
+            message: {
+              messageId: expect.any(String),
+              parts: [
+                {
+                  text: 'Hello, user!',
+                  kind: 'text',
+                },
+              ],
+              role: 'agent',
+              kind: 'message',
+            },
+            state: 'completed',
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+          kind: 'task',
+        },
+      });
+    });
+
+    it('should return an error when task cannot be found', async () => {
+      const requestId = 'test-request-id';
+      const nonExistentTaskId = 'non-existent-task-id';
+      const agentId = 'test-agent';
+
+      const mockTaskStore = new InMemoryTaskStore();
+      await expect(
+        handleTaskGet({
+          requestId,
+          taskStore: mockTaskStore,
+          agentId,
+          taskId: nonExistentTaskId,
+        }),
+      ).rejects.toThrow(MastraA2AError.taskNotFound(nonExistentTaskId));
+    });
+  });
+
+  describe('handleTaskCancel', () => {
+    let mockTaskStore: InMemoryTaskStore;
+
+    beforeEach(() => {
+      mockTaskStore = new InMemoryTaskStore();
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should successfully cancel a task in a non-final state', async () => {
+      const requestId = 'test-request-id';
+      const taskId = 'test-task-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+
+      const task: Task = {
+        id: taskId,
+        contextId: 'test-session-id',
+        status: {
+          state: 'working',
+          message: { messageId, kind: 'message', role: 'agent', parts: [{ kind: 'text', text: 'Working...' }] },
+          timestamp: new Date('2025-05-08T11:47:38.458Z').toISOString(),
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId, data: task });
+      vi.setSystemTime(new Date('2025-05-08T11:47:38.458Z'));
+
+      const result = await handleTaskCancel({
+        requestId,
+        taskStore: mockTaskStore,
+        agentId,
+        taskId,
+      });
+
+      // Verify task was updated to canceled state
+      const updatedData = await mockTaskStore.load({ agentId, taskId });
+      expect(updatedData?.status.state).toBe('canceled');
+      expect(result).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifacts: [],
+          id: expect.any(String),
+          contextId: expect.any(String),
+          metadata: undefined,
+          status: {
+            message: {
+              messageId: expect.any(String),
+              parts: [
+                {
+                  text: 'Task cancelled by request.',
+                  kind: 'text',
+                },
+              ],
+              role: 'agent',
+              kind: 'message',
+            },
+            state: 'canceled',
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+          kind: 'task',
+        },
+      });
+    });
+
+    it('should not cancel a task in a final state', async () => {
+      const requestId = 'test-request-id';
+      const taskId = 'test-task-id';
+      const messageId = 'test-message-id';
+      const agentId = 'test-agent';
+
+      const task: Task = {
+        id: taskId,
+        contextId: 'test-session-id',
+        status: {
+          state: 'completed',
+          message: { messageId, kind: 'message', role: 'agent', parts: [{ kind: 'text', text: 'Done!' }] },
+          timestamp: new Date('2025-05-08T11:47:38.458Z').toISOString(),
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId, data: task });
+
+      const result = await handleTaskCancel({
+        requestId,
+        taskStore: mockTaskStore,
+        agentId,
+        taskId,
+      });
+
+      // Verify task remained in completed state
+      const updatedData = await mockTaskStore.load({ agentId, taskId });
+      expect(updatedData?.status.state).toBe('completed');
+      expect(result).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifacts: [],
+          id: expect.any(String),
+          contextId: expect.any(String),
+          metadata: undefined,
+          status: {
+            message: {
+              messageId: expect.any(String),
+              parts: [
+                {
+                  text: 'Done!',
+                  kind: 'text',
+                },
+              ],
+              role: 'agent',
+              kind: 'message',
+            },
+            state: 'completed',
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+          kind: 'task',
+        },
+      });
+    });
+
+    it('should throw error when canceling non-existent task', async () => {
+      const requestId = 'test-request-id';
+      const nonExistentTaskId = 'non-existent-task-id';
+      const agentId = 'test-agent';
+
+      await expect(
+        handleTaskCancel({
+          requestId,
+          taskStore: mockTaskStore,
+          agentId,
+          taskId: nonExistentTaskId,
+        }),
+      ).rejects.toThrow(MastraA2AError.taskNotFound(nonExistentTaskId));
+    });
+  });
+
+  describe('getAgentExecutionHandler', () => {
+    let mockMastra: Mastra;
+    let mockTaskStore: InMemoryTaskStore;
+
+    beforeEach(() => {
+      const mockAgent = new MockAgent({
+        id: 'test-agent',
+        name: 'test-agent',
+        instructions: 'test instructions',
+        model: openai('gpt-4o'),
+      });
+
+      mockMastra = createMockMastra({
+        'test-agent': mockAgent,
+      });
+      mockTaskStore = new InMemoryTaskStore();
+    });
+
+    it('stores, retrieves, lists, and deletes push notification configs', async () => {
+      const pushNotificationStore = new InMemoryPushNotificationStore();
+
+      await mockTaskStore.save({
+        agentId: 'test-agent',
+        data: {
+          id: 'task-1',
+          contextId: 'context-1',
+          status: {
+            state: 'working',
+            message: undefined,
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+          artifacts: [],
+          metadata: undefined,
+          kind: 'task',
+        },
+      });
+
+      const setResult = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/pushNotificationConfig/set' as any,
+        params: { taskId: 'task-1', pushNotificationConfig: { url: 'https://example.com' } } as any,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+      });
+
+      expect(setResult).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          taskId: 'task-1',
+          pushNotificationConfig: {
+            id: 'task-1',
+            url: 'https://example.com',
+          },
+        },
+      });
+
+      const getResult = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/pushNotificationConfig/get' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+      });
+      expect(getResult).toEqual(setResult);
+
+      const listResult = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/pushNotificationConfig/list' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+      });
+      expect(listResult).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: [setResult.result],
+      });
+
+      const deleteResult = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/pushNotificationConfig/delete' as any,
+        params: { id: 'task-1', pushNotificationConfigId: 'task-1' } as any,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+      });
+      expect(deleteResult).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: null,
+      });
+
+      const listAfterDeleteResult = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/pushNotificationConfig/list' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+        pushNotificationStore,
+      });
+      expect(listAfterDeleteResult).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: [],
+      });
+    });
+
+    it('returns task not found when configuring push notifications for an unknown task', async () => {
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/pushNotificationConfig/set' as any,
+        params: { taskId: 'missing-task', pushNotificationConfig: { url: 'https://example.com' } } as any,
+        taskStore: mockTaskStore,
+        pushNotificationStore: new InMemoryPushNotificationStore(),
+      });
+
+      expect(result).toMatchObject({
+        error: {
+          code: -32001,
+          message: 'Task not found: missing-task',
+        },
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+      });
+    });
+
+    it('returns authenticated extended card not configured for agent/getAuthenticatedExtendedCard', async () => {
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'agent/getAuthenticatedExtendedCard' as any,
+        params: undefined as any,
+        taskStore: mockTaskStore,
+      });
+
+      expect(result).toMatchObject({
+        error: {
+          code: -32007,
+          message: 'Extended agent card is not configured',
+        },
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+      });
+    });
+
+    it('resubscribes to an existing terminal task by returning the current task snapshot and closing', async () => {
+      const task: Task = {
+        id: 'task-1',
+        contextId: 'context-1',
+        status: {
+          state: 'completed',
+          message: {
+            messageId: 'message-1',
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Done!' }],
+          },
+          timestamp: '2025-05-08T11:47:38.458Z',
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId: 'test-agent', data: task });
+
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/resubscribe' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+      });
+
+      const first = await result.next();
+      expect(first.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: task,
+      });
+
+      const done = await result.next();
+      expect(done.done).toBe(true);
+    });
+
+    it('returns the current task snapshot first, then streams live artifact and status updates', async () => {
+      const task: Task = {
+        id: 'task-1',
+        contextId: 'context-1',
+        status: {
+          state: 'working',
+          message: {
+            messageId: 'message-1',
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Still working...' }],
+          },
+          timestamp: '2025-05-08T11:47:38.458Z',
+        },
+        artifacts: [
+          {
+            artifactId: 'response:text',
+            name: 'response.txt',
+            parts: [{ kind: 'text', text: 'Still working...' }],
+          },
+        ],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId: 'test-agent', data: task });
+
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/resubscribe' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+      });
+
+      const first = await result.next();
+      expect(first.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: task,
+      });
+
+      const secondPromise = result.next();
+      await expect(Promise.race([secondPromise.then(() => 'resolved'), Promise.resolve('pending')])).resolves.toBe(
+        'pending',
+      );
+
+      await mockTaskStore.save({
+        agentId: 'test-agent',
+        data: {
+          ...task,
+          artifacts: [
+            ...task.artifacts!,
+            {
+              artifactId: 'response:data',
+              name: 'response.json',
+              parts: [{ kind: 'data', data: { total: 33.98 } }],
+            },
+          ],
+          status: {
+            state: 'completed',
+            message: {
+              messageId: 'message-2',
+              kind: 'message',
+              role: 'agent',
+              parts: [{ kind: 'text', text: 'Done!' }],
+            },
+            timestamp: '2025-05-08T11:48:38.458Z',
+          },
+        },
+      });
+
+      const second = await secondPromise;
+      expect(second.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifact: {
+            artifactId: 'response:data',
+            name: 'response.json',
+            parts: [{ kind: 'data', data: { total: 33.98 } }],
+          },
+          contextId: 'context-1',
+          kind: 'artifact-update',
+          lastChunk: true,
+          taskId: 'task-1',
+        },
+      });
+
+      const third = await result.next();
+      expect(third.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          contextId: 'context-1',
+          final: true,
+          kind: 'status-update',
+          status: {
+            message: {
+              kind: 'message',
+              messageId: 'message-2',
+              parts: [{ kind: 'text', text: 'Done!' }],
+              role: 'agent',
+            },
+            state: 'completed',
+            timestamp: '2025-05-08T11:48:38.458Z',
+          },
+          taskId: 'task-1',
+        },
+      });
+
+      const done = await result.next();
+      expect(done.done).toBe(true);
+    });
+
+    it('streams artifact updates even when task status does not change', async () => {
+      const task: Task = {
+        id: 'task-1',
+        contextId: 'context-1',
+        status: {
+          state: 'working',
+          message: {
+            messageId: 'message-1',
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Still working...' }],
+          },
+          timestamp: '2025-05-08T11:47:38.458Z',
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId: 'test-agent', data: task });
+
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/resubscribe' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+      });
+
+      const first = await result.next();
+      expect(first.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: task,
+      });
+
+      const secondPromise = result.next();
+
+      await mockTaskStore.save({
+        agentId: 'test-agent',
+        data: {
+          ...task,
+          artifacts: [
+            {
+              artifactId: 'response:text',
+              name: 'response.txt',
+              parts: [{ kind: 'text', text: 'Partial result' }],
+            },
+          ],
+        },
+      });
+
+      const second = await secondPromise;
+      expect(second.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifact: {
+            artifactId: 'response:text',
+            name: 'response.txt',
+            parts: [{ kind: 'text', text: 'Partial result' }],
+          },
+          contextId: 'context-1',
+          kind: 'artifact-update',
+          lastChunk: false,
+          taskId: 'task-1',
+        },
+      });
+    });
+
+    it('streams status updates when only status message metadata changes', async () => {
+      const task: Task = {
+        id: 'task-1',
+        contextId: 'context-1',
+        status: {
+          state: 'working',
+          message: {
+            messageId: 'message-1',
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Still working...' }],
+            metadata: { phase: 'initial' },
+          },
+          timestamp: '2025-05-08T11:47:38.458Z',
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId: 'test-agent', data: task });
+
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/resubscribe' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+      });
+
+      const first = await result.next();
+      expect(first.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: task,
+      });
+
+      const secondPromise = result.next();
+
+      await mockTaskStore.save({
+        agentId: 'test-agent',
+        data: {
+          ...task,
+          status: {
+            ...task.status,
+            message: {
+              ...task.status.message!,
+              metadata: { phase: 'updated' },
+            },
+          },
+        },
+      });
+
+      const second = await secondPromise;
+      expect(second.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          contextId: 'context-1',
+          final: false,
+          kind: 'status-update',
+          status: {
+            message: {
+              kind: 'message',
+              messageId: 'message-1',
+              metadata: { phase: 'updated' },
+              parts: [{ kind: 'text', text: 'Still working...' }],
+              role: 'agent',
+            },
+            state: 'working',
+            timestamp: '2025-05-08T11:47:38.458Z',
+          },
+          taskId: 'task-1',
+        },
+      });
+    });
+
+    it('streams each changed artifact in order before the final status update', async () => {
+      const task: Task = {
+        id: 'task-1',
+        contextId: 'context-1',
+        status: {
+          state: 'working',
+          message: {
+            messageId: 'message-1',
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Still working...' }],
+          },
+          timestamp: '2025-05-08T11:47:38.458Z',
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId: 'test-agent', data: task });
+
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/resubscribe' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+      });
+
+      const first = await result.next();
+      expect(first.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: task,
+      });
+
+      const secondPromise = result.next();
+
+      await mockTaskStore.save({
+        agentId: 'test-agent',
+        data: {
+          ...task,
+          artifacts: [
+            {
+              artifactId: 'response:text',
+              name: 'response.txt',
+              parts: [{ kind: 'text', text: 'Partial result' }],
+            },
+            {
+              artifactId: 'response:data',
+              name: 'response.json',
+              parts: [{ kind: 'data', data: { total: 33.98 } }],
+            },
+          ],
+          status: {
+            state: 'completed',
+            message: {
+              messageId: 'message-2',
+              kind: 'message',
+              role: 'agent',
+              parts: [{ kind: 'text', text: 'Done!' }],
+            },
+            timestamp: '2025-05-08T11:48:38.458Z',
+          },
+        },
+      });
+
+      const second = await secondPromise;
+      expect(second.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifact: {
+            artifactId: 'response:text',
+            name: 'response.txt',
+            parts: [{ kind: 'text', text: 'Partial result' }],
+          },
+          contextId: 'context-1',
+          kind: 'artifact-update',
+          lastChunk: false,
+          taskId: 'task-1',
+        },
+      });
+
+      const third = await result.next();
+      expect(third.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          artifact: {
+            artifactId: 'response:data',
+            name: 'response.json',
+            parts: [{ kind: 'data', data: { total: 33.98 } }],
+          },
+          contextId: 'context-1',
+          kind: 'artifact-update',
+          lastChunk: true,
+          taskId: 'task-1',
+        },
+      });
+
+      const fourth = await result.next();
+      expect(fourth.value).toEqual({
+        id: 'test-request-id',
+        jsonrpc: '2.0',
+        result: {
+          contextId: 'context-1',
+          final: true,
+          kind: 'status-update',
+          status: {
+            message: {
+              kind: 'message',
+              messageId: 'message-2',
+              parts: [{ kind: 'text', text: 'Done!' }],
+              role: 'agent',
+            },
+            state: 'completed',
+            timestamp: '2025-05-08T11:48:38.458Z',
+          },
+          taskId: 'task-1',
+        },
+      });
+
+      const done = await result.next();
+      expect(done.done).toBe(true);
+    });
+
+    it('unregisters resubscribe listeners when the abort signal is triggered', async () => {
+      const task: Task = {
+        id: 'task-1',
+        contextId: 'context-1',
+        status: {
+          state: 'working',
+          message: {
+            messageId: 'message-1',
+            kind: 'message',
+            role: 'agent',
+            parts: [{ kind: 'text', text: 'Still working...' }],
+          },
+          timestamp: '2025-05-08T11:47:38.458Z',
+        },
+        artifacts: [],
+        metadata: undefined,
+        kind: 'task',
+      };
+
+      await mockTaskStore.save({ agentId: 'test-agent', data: task });
+
+      const abortController = new AbortController();
+      const result = await getAgentExecutionHandler({
+        requestId: 'test-request-id',
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        method: 'tasks/resubscribe' as any,
+        params: { id: 'task-1' } as any,
+        taskStore: mockTaskStore,
+        abortSignal: abortController.signal,
+      });
+
+      const first = await result.next();
+      expect(first.value).toMatchObject({
+        result: task,
+      });
+
+      const pendingNext = result.next();
+      expect(((mockTaskStore as any).listeners.get('test-agent-task-1') as Set<unknown> | undefined)?.size).toBe(1);
+
+      abortController.abort();
+
+      await expect(pendingNext).rejects.toMatchObject({ name: 'AbortError' });
+      expect(((mockTaskStore as any).listeners.get('test-agent-task-1') as Set<unknown> | undefined)?.size).toBe(
+        undefined,
+      );
+    });
+  });
+
+  describe('AGENT_EXECUTION_ROUTE', () => {
+    let mockMastra: Mastra;
+    let mockTaskStore: InMemoryTaskStore;
+
+    beforeEach(() => {
+      const mockAgent = new MockAgent({
+        id: 'test-agent',
+        name: 'test-agent',
+        instructions: 'test instructions',
+        model: openai('gpt-4o'),
+      });
+
+      mockMastra = createMockMastra({
+        'test-agent': mockAgent,
+      });
+      mockTaskStore = new InMemoryTaskStore();
+    });
+
+    it('returns JSON for non-streaming A2A methods', async () => {
+      const response = await AGENT_EXECUTION_ROUTE.handler({
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        taskStore: mockTaskStore,
+        abortSignal: AbortSignal.abort(),
+        id: 1,
+        method: 'tasks/get',
+        params: { id: 'missing-task' },
+      });
+
+      expect(response.headers.get('Content-Type')).toContain('application/json');
+
+      const payload = await response.json();
+      expect(payload).toMatchObject({
+        id: 1,
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: 'Task not found: missing-task',
+        },
+      });
+    });
+
+    it('returns SSE for streaming A2A methods', async () => {
+      const mockAgent = mockMastra.getAgentById('test-agent');
+      // @ts-expect-error - mockResolvedValue is not available on the Agent class
+      mockAgent.stream.mockResolvedValue(
+        createStreamResult({
+          chunks: ['Hello from SSE'],
+        }),
+      );
+
+      const response = await AGENT_EXECUTION_ROUTE.handler({
+        mastra: mockMastra,
+        agentId: 'test-agent',
+        requestContext: new RequestContext(),
+        taskStore: mockTaskStore,
+        abortSignal: AbortSignal.abort(),
+        id: 42,
+        method: 'message/stream',
+        params: {
+          message: {
+            messageId: 'user-message-id',
+            kind: 'message',
+            role: 'user',
+            parts: [{ kind: 'text', text: 'Hello' }],
+          },
+          configuration: {
+            blocking: true,
+          },
+        },
+      });
+
+      expect(response.headers.get('Content-Type')).toContain('text/event-stream');
+
+      const body = await response.text();
+      expect(body).toContain('data: {"jsonrpc":"2.0","id":42,"result":{"id":');
+      expect(body).toContain('"kind":"task"');
+      expect(body).toContain('"kind":"status-update"');
+      expect(body).toContain('Hello from SSE');
+    });
+  });
+});

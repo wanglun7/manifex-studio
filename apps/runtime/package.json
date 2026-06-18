@@ -1,0 +1,31 @@
+{
+  "name": "mastra-sandbox-research",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/clean-dev-port.mjs && mastra dev",
+    "dev:raw": "mastra dev",
+    "docker:build-runtime": "docker build -f docker/agent-runtime.Dockerfile -t manifex-agent-runtime:latest .",
+    "skills:sync-lark": "node scripts/sync-lark-skills.mjs",
+    "test:sandbox-lifecycle": "tsx tests/smoke/verify-sandbox-lifecycle.ts",
+    "test:docker-thread-isolation": "tsx tests/smoke/verify-docker-thread-isolation.ts",
+    "test:local-sandbox": "tsx verify-local-sandbox-bypass.ts",
+    "test:skills": "tsx tests/smoke/verify-skills.ts"
+  },
+  "dependencies": {
+    "@mastra/core": "^1.42.0",
+    "@mastra/docker": "^0.3.0",
+    "@mastra/editor": "^0.11.2",
+    "@mastra/libsql": "^1.13.0",
+    "@mastra/mcp": "^1.10.0",
+    "@mastra/memory": "^1.20.3",
+    "@mastra/observability": "^1.14.1",
+    "mcp-searxng": "^1.6.0",
+    "tsx": "^4.20.6"
+  },
+  "devDependencies": {
+    "mastra": "^1.13.0",
+    "vscode-jsonrpc": "^9.0.0",
+    "vscode-languageserver-protocol": "^3.18.0"
+  }
+}

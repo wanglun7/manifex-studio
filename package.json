@@ -1,31 +1,13 @@
 {
-  "name": "mastra-sandbox-research",
+  "name": "manifex-studio",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/clean-dev-port.mjs && mastra dev",
-    "dev:raw": "mastra dev",
-    "docker:build-runtime": "docker build -f docker/agent-runtime.Dockerfile -t manifex-agent-runtime:latest .",
-    "skills:sync-lark": "node scripts/sync-lark-skills.mjs",
-    "test:sandbox-lifecycle": "tsx tests/smoke/verify-sandbox-lifecycle.ts",
-    "test:docker-thread-isolation": "tsx tests/smoke/verify-docker-thread-isolation.ts",
-    "test:local-sandbox": "tsx verify-local-sandbox-bypass.ts",
-    "test:skills": "tsx tests/smoke/verify-skills.ts"
-  },
-  "dependencies": {
-    "@mastra/core": "^1.42.0",
-    "@mastra/docker": "^0.3.0",
-    "@mastra/editor": "^0.11.2",
-    "@mastra/libsql": "^1.13.0",
-    "@mastra/mcp": "^1.10.0",
-    "@mastra/memory": "^1.20.3",
-    "@mastra/observability": "^1.14.1",
-    "mcp-searxng": "^1.6.0",
-    "tsx": "^4.20.6"
-  },
-  "devDependencies": {
-    "mastra": "^1.13.0",
-    "vscode-jsonrpc": "^9.0.0",
-    "vscode-languageserver-protocol": "^3.18.0"
+    "dev:runtime": "npm --prefix apps/runtime run dev",
+    "dev:studio": "pnpm -C apps/studio dev:playground",
+    "docker:build-runtime": "npm --prefix apps/runtime run docker:build-runtime",
+    "skills:sync-lark": "npm --prefix apps/runtime run skills:sync-lark",
+    "test:runtime": "npm --prefix apps/runtime run test:skills && npm --prefix apps/runtime run test:sandbox-lifecycle && npm --prefix apps/runtime run test:docker-thread-isolation",
+    "test:studio": "pnpm -C apps/studio --filter @internal/playground test src/lib/ai-ui/messages/__tests__/message-row.test.tsx --run"
   }
 }

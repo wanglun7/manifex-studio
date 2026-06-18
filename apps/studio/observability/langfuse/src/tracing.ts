@@ -1,0 +1,424 @@
+/**
+ * Langfuse Exporter for Mastra Observability
+ *
+ * Sends observability data to Langfuse using the official @langfuse/otel span processor
+ * and @langfuse/client for non-tracing features (scoring, prompt management, evaluations).
+ *
+ * @see https://langfuse.com/docs/observability/sdk/typescript/overview
+ */
+
+import { LangfuseClient } from '@langfuse/client';
+import { LangfuseSpanProcessor } from '@langfuse/otel';
+import type { TracingEvent, AnyExportedSpan, InitExporterOptions, ScoreEvent } from '@mastra/core/observability';
+import { SpanType, TracingEventType } from '@mastra/core/observability';
+import { BaseExporter } from '@mastra/observability';
+import type { BaseExporterConfig } from '@mastra/observability';
+import { SpanConverter } from '@mastra/otel-exporter';
+
+const LOG_PREFIX = '[LangfuseExporter]';
+
+export const LANGFUSE_DEFAULT_BASE_URL = 'https://cloud.langfuse.com';
+
+export interface LangfuseExporterConfig extends BaseExporterConfig {
+  /** Langfuse public key */
+  publicKey?: string;
+  /** Langfuse secret key */
+  secretKey?: string;
+  /** Langfuse host URL (defaults to https://cloud.langfuse.com) */
+  baseUrl?: string;
+  /** Enable realtime mode - flushes after each event for immediate visibility */
+  realtime?: boolean;
+  /** Maximum number of spans per OTEL export batch */
+  flushAt?: number;
+  /** Maximum time in seconds before pending spans are exported */
+  flushInterval?: number;
+  /** Langfuse environment tag for traces */
+  environment?: string;
+  /** Langfuse release tag for traces */
+  release?: string;
+}
+
+export class LangfuseExporter extends BaseExporter {
+  name = 'langfuse';
+  #processor: LangfuseSpanProcessor | undefined;
+  #client: LangfuseClient | undefined;
+  #spanConverter: SpanConverter | undefined;
+  #realtime: boolean;
+  #environment: string | undefined;
+  #release: string | undefined;
+
+  constructor(config: LangfuseExporterConfig = {}) {
+    super(config);
+
+    const publicKey = config.publicKey ?? process.env.LANGFUSE_PUBLIC_KEY;
+    const secretKey = config.secretKey ?? process.env.LANGFUSE_SECRET_KEY;
+    const baseUrl = stripTrailingSlashes(config.baseUrl ?? process.env.LANGFUSE_BASE_URL ?? LANGFUSE_DEFAULT_BASE_URL);
+    this.#realtime = config.realtime ?? false;
+
+    if (!publicKey || !secretKey) {
+      const publicKeySource = config.publicKey
+        ? 'from config'
+        : process.env.LANGFUSE_PUBLIC_KEY
+          ? 'from env'
+          : 'missing';
+      const secretKeySource = config.secretKey
+        ? 'from config'
+        : process.env.LANGFUSE_SECRET_KEY
+          ? 'from env'
+          : 'missing';
+      this.setDisabled(
+        `${LOG_PREFIX} Missing required credentials (publicKey: ${publicKeySource}, secretKey: ${secretKeySource}). ` +
+          `Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY environment variables or pass them in config.`,
+      );
+      return;
+    }
+
+    this.#processor = new LangfuseSpanProcessor({
+      publicKey,
+      secretKey,
+      baseUrl,
+      environment: config.environment,
+      release: config.release,
+      exportMode: this.#realtime ? 'immediate' : 'batched',
+      flushAt: config.flushAt,
+      flushInterval: config.flushInterval,
+      // Export all spans — the default filter only passes spans with gen_ai.* attributes
+      // or known LLM instrumentation scopes, but Mastra spans use mastra.* attributes.
+      shouldExportSpan: () => true,
+    });
+
+    this.#client = new LangfuseClient({
+      publicKey,
+      secretKey,
+      baseUrl,
+    });
+
+    this.#environment = config.environment ?? process.env.LANGFUSE_TRACING_ENVIRONMENT;
+    this.#release = config.release ?? process.env.LANGFUSE_RELEASE;
+  }
+
+  init(options: InitExporterOptions) {
+    this.#spanConverter = new SpanConverter({
+      packageName: '@mastra/langfuse',
+      serviceName: options.config?.serviceName,
+      format: 'GenAI_v1_38_0',
+    });
+  }
+
+  protected async _exportTracingEvent(event: TracingEvent): Promise<void> {
+    if (event.type !== TracingEventType.SPAN_ENDED) return;
+    if (!this.#processor) return;
+
+    await this.exportSpan(event.exportedSpan);
+  }
+
+  private async exportSpan(span: AnyExportedSpan): Promise<void> {
+    if (!this.#spanConverter) {
+      // Fallback if init() was not called (e.g., standalone usage without Mastra)
+      this.#spanConverter = new SpanConverter({
+        packageName: '@mastra/langfuse',
+        serviceName: 'mastra-service',
+        format: 'GenAI_v1_38_0',
+      });
+    }
+
+    try {
+      const otelSpan = await this.#spanConverter.convertSpan(span);
+
+      // Map mastra.* attributes to langfuse.* namespace so that Langfuse's OTLP
+      // endpoint reads them correctly. SpanConverter produces mastra.* attributes,
+      // but Langfuse only reads langfuse.* attributes for prompt linking, TTFT, etc.
+      // @see https://langfuse.com/integrations/native/opentelemetry#property-mapping
+      mapMastraToLangfuseAttributes(otelSpan.attributes, span, this.#environment, this.#release);
+
+      this.#processor!.onEnd(otelSpan);
+    } catch (error) {
+      this.logger.error(`${LOG_PREFIX} Failed to export span ${span.id}:`, error);
+    }
+  }
+
+  /**
+   * The LangfuseClient instance for advanced Langfuse features.
+   * Use this for prompt management, evaluations, datasets, and direct API access.
+   */
+  get client(): LangfuseClient | undefined {
+    return this.#client;
+  }
+
+  /**
+   * Submit a score to Langfuse. Used by both the new `onScoreEvent` path and the
+   * deprecated `addScoreToTrace` wrapper.
+   */
+  private submitScore(args: {
+    id: string;
+    traceId: string;
+    spanId?: string;
+    name: string;
+    value: number;
+    comment?: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    if (!this.#client) return;
+
+    const { id, traceId, spanId, name, value, comment, metadata } = args;
+    try {
+      this.#client.score.create({
+        id,
+        traceId,
+        ...(spanId ? { observationId: spanId } : {}),
+        name,
+        value,
+        ...(comment ? { comment } : {}),
+        ...(metadata ? { metadata } : {}),
+        dataType: 'NUMERIC' as const,
+      });
+    } catch (error) {
+      this.logger.error(`${LOG_PREFIX} Error submitting score`, {
+        error,
+        traceId,
+        spanId,
+        name,
+      });
+    }
+  }
+
+  async onScoreEvent(event: ScoreEvent): Promise<void> {
+    const { score } = event;
+    if (!score.traceId) return;
+    this.submitScore({
+      id: score.scoreId,
+      traceId: score.traceId,
+      spanId: score.spanId,
+      name: score.scorerName ?? score.scorerId,
+      value: score.score,
+      comment: score.reason,
+      metadata: score.metadata,
+    });
+  }
+
+  /**
+   * @deprecated Use the observability score event pipeline (`mastra.observability.addScore`)
+   * instead. This method is preserved for backwards compatibility and forwards to the same
+   * underlying client call as `onScoreEvent`.
+   */
+  async addScoreToTrace({
+    traceId,
+    spanId,
+    score,
+    reason,
+    scorerName,
+    metadata,
+  }: {
+    traceId: string;
+    spanId?: string;
+    score: number;
+    reason?: string;
+    scorerName: string;
+    metadata?: Record<string, any>;
+  }): Promise<void> {
+    this.submitScore({
+      id: `${traceId}-${spanId || ''}-${scorerName}`,
+      traceId,
+      spanId,
+      name: scorerName,
+      value: score,
+      comment: reason,
+      metadata,
+    });
+  }
+
+  async flush(): Promise<void> {
+    await Promise.all([this.#processor?.forceFlush(), this.#client?.flush()]);
+  }
+
+  async shutdown(): Promise<void> {
+    await Promise.all([this.#processor?.shutdown(), this.#client?.shutdown()]);
+  }
+}
+
+/**
+ * Maps Mastra-specific OTel attributes to the langfuse.* namespace that
+ * Langfuse's OTLP endpoint reads for prompt linking, TTFT, and other features.
+ *
+ * SpanConverter produces attributes like mastra.metadata.*, mastra.completion_start_time, etc.
+ * Langfuse's OTLP server only reads langfuse.observation.prompt.name, langfuse.observation.completion_start_time, etc.
+ *
+ * This function mutates the attributes object in place.
+ * @see https://langfuse.com/integrations/native/opentelemetry#property-mapping
+ */
+function mapMastraToLangfuseAttributes(
+  attributes: Record<string, any>,
+  span: AnyExportedSpan,
+  environment?: string,
+  release?: string,
+): void {
+  // Environment and release: set directly since onStart() is not called
+  if (environment) {
+    attributes['langfuse.environment'] = environment;
+  }
+  if (release) {
+    attributes['langfuse.release'] = release;
+  }
+
+  // mastra.metadata.langfuse holds a user-supplied object with two kinds of keys:
+  //   - the reserved `prompt` key, used for prompt linking, and
+  //   - arbitrary custom keys the user wants as top-level, filterable trace metadata.
+  // Langfuse only allows filtering/grouping traces by top-level metadata
+  // (langfuse.trace.metadata.*), so forward every non-prompt key there. These
+  // attributes may be set on any span in the trace and land on the trace record.
+  // @see https://langfuse.com/integrations/native/opentelemetry#property-mapping
+  const langfuseMetadata = attributes['mastra.metadata.langfuse'];
+  if (langfuseMetadata) {
+    try {
+      const parsed = typeof langfuseMetadata === 'string' ? JSON.parse(langfuseMetadata) : langfuseMetadata;
+      if (parsed && typeof parsed === 'object') {
+        // Prompt linking: mastra.metadata.langfuse.prompt → langfuse.observation.prompt.name / version
+        if (parsed.prompt) {
+          if (parsed.prompt.name !== undefined) {
+            attributes['langfuse.observation.prompt.name'] = parsed.prompt.name;
+          }
+          if (parsed.prompt.version !== undefined) {
+            attributes['langfuse.observation.prompt.version'] = parsed.prompt.version;
+          }
+        }
+
+        // Custom keys: mastra.metadata.langfuse.<key> → langfuse.trace.metadata.<key>
+        // Reserved identity keys (agentId/agentName/workflowId/workflowName) are set
+        // by the root-span block below, which runs after this loop and takes precedence.
+        for (const [key, value] of Object.entries(parsed)) {
+          if (key === 'prompt' || value === null || value === undefined) {
+            continue;
+          }
+          const traceKey = `langfuse.trace.metadata.${key}`;
+          // Don't overwrite a trace.metadata key already mapped from another attribute.
+          if (attributes[traceKey] === undefined) {
+            // Langfuse maps langfuse.trace.metadata.* as string attributes, so
+            // serialize non-strings with JSON. Langfuse Cloud restores numbers,
+            // booleans, and objects to their original types on ingestion.
+            attributes[traceKey] = typeof value === 'string' ? value : JSON.stringify(value);
+          }
+        }
+      }
+    } catch {
+      // best effort — invalid JSON is silently ignored
+    }
+    delete attributes['mastra.metadata.langfuse'];
+  }
+
+  // TTFT: mastra.completion_start_time → langfuse.observation.completion_start_time
+  if (attributes['mastra.completion_start_time']) {
+    attributes['langfuse.observation.completion_start_time'] = attributes['mastra.completion_start_time'];
+    delete attributes['mastra.completion_start_time'];
+  }
+
+  // User ID: mastra.metadata.userId → user.id
+  if (attributes['mastra.metadata.userId']) {
+    attributes['user.id'] = attributes['mastra.metadata.userId'];
+    delete attributes['mastra.metadata.userId'];
+  }
+
+  // Session ID: mastra.metadata.sessionId or threadId → session.id
+  const sessionId = attributes['mastra.metadata.sessionId'] ?? attributes['mastra.metadata.threadId'];
+  if (sessionId) {
+    attributes['session.id'] = sessionId;
+    delete attributes['mastra.metadata.sessionId'];
+    delete attributes['mastra.metadata.threadId'];
+  }
+
+  // Tags: mastra.tags → langfuse.trace.tags
+  if (attributes['mastra.tags']) {
+    attributes['langfuse.trace.tags'] = attributes['mastra.tags'];
+    delete attributes['mastra.tags'];
+  }
+
+  // Trace name: mastra.metadata.traceName → langfuse.trace.name
+  if (attributes['mastra.metadata.traceName']) {
+    attributes['langfuse.trace.name'] = attributes['mastra.metadata.traceName'];
+    delete attributes['mastra.metadata.traceName'];
+  }
+
+  // Trace version: mastra.metadata.version → langfuse.trace.version
+  if (attributes['mastra.metadata.version']) {
+    attributes['langfuse.trace.version'] = attributes['mastra.metadata.version'];
+    delete attributes['mastra.metadata.version'];
+  }
+
+  // Root-span trace identity: scope each Langfuse trace to the entity that
+  // started it (agent or workflow). This makes the Langfuse trace name match
+  // the agent/workflow id and exposes the same identity as trace metadata, so
+  // users can scope Langfuse evaluators per agent via trace name or metadata
+  // filters. User-provided traceName (set via mastra.metadata.traceName) takes
+  // precedence and is preserved.
+  if (span.isRootSpan) {
+    if (span.type === SpanType.AGENT_RUN) {
+      if (!attributes['langfuse.trace.name'] && (span.entityName || span.entityId)) {
+        attributes['langfuse.trace.name'] = span.entityName ?? span.entityId;
+      }
+      if (span.entityId) {
+        attributes['langfuse.trace.metadata.agentId'] = span.entityId;
+      }
+      if (span.entityName) {
+        attributes['langfuse.trace.metadata.agentName'] = span.entityName;
+      }
+    } else if (span.type === SpanType.WORKFLOW_RUN) {
+      if (!attributes['langfuse.trace.name'] && (span.entityName || span.entityId)) {
+        attributes['langfuse.trace.name'] = span.entityName ?? span.entityId;
+      }
+      if (span.entityId) {
+        attributes['langfuse.trace.metadata.workflowId'] = span.entityId;
+      }
+      if (span.entityName) {
+        attributes['langfuse.trace.metadata.workflowName'] = span.entityName;
+      }
+    }
+  }
+
+  // Observation metadata: map semantic attributes to langfuse.observation.metadata.*
+  // so they become top-level filterable keys on each observation in Langfuse.
+  // @see https://langfuse.com/integrations/native/opentelemetry#how-metadata-mapping-works
+  if (attributes['gen_ai.agent.id']) {
+    attributes['langfuse.observation.metadata.agentId'] = attributes['gen_ai.agent.id'];
+  }
+  if (attributes['gen_ai.agent.name']) {
+    attributes['langfuse.observation.metadata.agentName'] = attributes['gen_ai.agent.name'];
+  }
+  if (attributes['mastra.span.type']) {
+    attributes['langfuse.observation.metadata.spanType'] = attributes['mastra.span.type'];
+  }
+  if (attributes['gen_ai.operation.name']) {
+    attributes['langfuse.observation.metadata.operationName'] = attributes['gen_ai.operation.name'];
+  }
+
+  // Input/Output: mastra.*.input/output → langfuse.observation.input/output
+  // For gen_ai spans, Langfuse reads gen_ai.input.messages natively.
+  // For non-gen_ai spans, we map the first mastra.*.input/output we find.
+  if (!attributes['gen_ai.input.messages'] && !attributes['gen_ai.tool.call.arguments']) {
+    for (const key of Object.keys(attributes)) {
+      if (key.startsWith('mastra.') && key.endsWith('.input')) {
+        attributes['langfuse.observation.input'] = attributes[key];
+        break;
+      }
+    }
+  }
+  if (!attributes['gen_ai.output.messages'] && !attributes['gen_ai.tool.call.result']) {
+    for (const key of Object.keys(attributes)) {
+      if (key.startsWith('mastra.') && key.endsWith('.output')) {
+        attributes['langfuse.observation.output'] = attributes[key];
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * Remove trailing "/" characters procedurally. Avoids polynomial
+ * backtracking that a greedy regex like `/\/+$/` can exhibit when the
+ * input is attacker-controlled.
+ */
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* "/" */) {
+    end--;
+  }
+  return end === s.length ? s : s.slice(0, end);
+}

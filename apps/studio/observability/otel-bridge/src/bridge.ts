@@ -1,0 +1,398 @@
+/**
+ * OpenTelemetry Bridge for Mastra Observability
+ *
+ * This bridge enables bidirectional integration with OpenTelemetry infrastructure:
+ * 1. Reads OTEL trace context from active spans (via AsyncLocalStorage)
+ * 2. Creates real OTEL spans when Mastra spans are created
+ * 3. Maintains span context for proper parent-child relationships
+ * 4. Allows OTEL-instrumented code (DB, HTTP clients) in tools/workflows to have correct parents
+ *
+ * This creates complete distributed traces where Mastra spans are properly
+ * nested within OTEL spans from auto-instrumentation, and any OTEL-instrumented
+ * operations within Mastra spans maintain the correct hierarchy.
+ */
+
+import type {
+  ObservabilityBridge,
+  TracingEvent,
+  LogEvent,
+  CreateSpanOptions,
+  SpanType,
+  SpanIds,
+  InitExporterOptions,
+} from '@mastra/core/observability';
+import { TracingEventType } from '@mastra/core/observability';
+import { BaseExporter, getExternalParentId } from '@mastra/observability';
+import { SpanConverter, convertLog, getSpanKind } from '@mastra/otel-exporter';
+import { trace as otelTrace, context as otelContext, isSpanContextValid, TraceFlags } from '@opentelemetry/api';
+import type { Span as OtelSpan, Context as OtelContext } from '@opentelemetry/api';
+import { logs as otelLogs } from '@opentelemetry/api-logs';
+import type { Logger as OtelLogger } from '@opentelemetry/api-logs';
+
+/**
+ * Configuration for the OtelBridge
+ */
+
+export type OtelBridgeConfig = {
+  // Currently no configuration options - placeholder for future options
+};
+
+/**
+ * OpenTelemetry Bridge implementation
+ *
+ * Creates real OTEL spans when Mastra spans are created, maintaining proper
+ * context propagation for nested instrumentation.
+ *
+ * @example
+ * ```typescript
+ * import { OtelBridge } from '@mastra/otel-bridge';
+ * import { Mastra } from '@mastra/core';
+ *
+ * const mastra = new Mastra({
+ *   agents: { myAgent },
+ *   observability: {
+ *     configs: {
+ *       default: {
+ *         serviceName: 'my-service',
+ *         bridge: new OtelBridge(),
+ *       }
+ *     }
+ *   }
+ * });
+ * ```
+ */
+export class OtelBridge extends BaseExporter implements ObservabilityBridge {
+  name = 'otel';
+  private otelTracer = otelTrace.getTracer('@mastra/otel-bridge', '1.0.0');
+  private otelLogger: OtelLogger = otelLogs.getLogger('@mastra/otel-bridge', '1.0.0');
+  private otelSpanMap = new Map<string, { otelSpan: OtelSpan; otelContext: OtelContext }>();
+  private spanConverter?: SpanConverter;
+
+  constructor(config: OtelBridgeConfig = {}) {
+    super(config);
+  }
+
+  /**
+   * Handle Mastra tracing events
+   *
+   * Ships OTEL spans when Mastra spans end.
+   * This maintains proper span hierarchy and allows OTEL-instrumented code within
+   * Mastra spans to have correct parent-child relationships.
+   * Note: OTEL spans are created when registerSpan is called when the span is first created.
+   */
+  protected async _exportTracingEvent(event: TracingEvent): Promise<void> {
+    if (event.type === TracingEventType.SPAN_ENDED) {
+      await this.handleSpanEnded(event);
+    }
+  }
+
+  /**
+   * Forward Mastra log events into the globally-registered OTEL LoggerProvider.
+   *
+   * If the user has not registered a LoggerProvider (e.g. via @opentelemetry/sdk-logs
+   * or NodeSDK's logRecordProcessor option), the API returns a no-op logger and
+   * emit() is a silent no-op — the bridge degrades gracefully.
+   *
+   * Trace correlation:
+   * - If the log carries a spanId we have an OTEL span for, emit under that span's
+   *   stored context so the log nests beneath it in the trace.
+   * - Else if the log carries traceId+spanId, attach a SpanContext built from those
+   *   IDs so backends still correlate by ID.
+   * - Else emit under whatever context is currently active.
+   */
+  async onLogEvent(event: LogEvent): Promise<void> {
+    if (this.isDisabled) return;
+
+    try {
+      const params = convertLog(event.log);
+
+      const attributes = { ...params.attributes };
+      if (params.traceId) attributes['mastra.traceId'] = params.traceId;
+      if (params.spanId) attributes['mastra.spanId'] = params.spanId;
+
+      const logContext = this.resolveLogContext(params.traceId, params.spanId);
+
+      this.otelLogger.emit({
+        timestamp: params.timestamp,
+        severityNumber: params.severityNumber,
+        severityText: params.severityText,
+        body: params.body,
+        attributes,
+        context: logContext,
+      });
+    } catch (error) {
+      this.logger.error('[OtelBridge] Failed to emit log:', error);
+    }
+  }
+
+  /**
+   * Pick the OTEL Context to emit a log under so trace correlation is correct.
+   */
+  private resolveLogContext(traceId?: string, spanId?: string): OtelContext {
+    // 1. Prefer the stored OTEL context for the originating Mastra span.
+    if (spanId) {
+      const entry = this.otelSpanMap.get(spanId);
+      if (entry) return entry.otelContext;
+    }
+
+    // 2. Fall back to a context with a span context built from the raw IDs,
+    //    but only when both IDs form a valid W3C span context. Injecting
+    //    malformed IDs would surface as garbage trace links downstream.
+    if (traceId && spanId) {
+      const candidate = {
+        traceId,
+        spanId,
+        traceFlags: TraceFlags.SAMPLED,
+        isRemote: false,
+      };
+      if (isSpanContextValid(candidate)) {
+        return otelTrace.setSpanContext(otelContext.active(), candidate);
+      }
+    }
+
+    // 3. Fall through to whatever is currently active.
+    return otelContext.active();
+  }
+
+  /**
+   * Initialize with tracing configuration
+   */
+  init(options: InitExporterOptions) {
+    this.spanConverter = new SpanConverter({
+      packageName: '@mastra/otel-bridge',
+      serviceName: options.config?.serviceName,
+      format: 'GenAI_v1_38_0',
+    });
+  }
+
+  /**
+   * Create a span in the bridge's tracing system.
+   * Called during Mastra span construction to get bridge-generated identifiers.
+   *
+   * @param options - Span creation options from Mastra
+   * @returns Span identifiers (spanId, traceId, parentSpanId) from bridge, or undefined if creation fails
+   */
+  createSpan(options: CreateSpanOptions<SpanType>): SpanIds | undefined {
+    try {
+      // Determine parent context
+      let parentOtelContext = otelContext.active();
+
+      // Get external parent ID (walks up chain to find non-internal parent)
+      const externalParentId = getExternalParentId(options);
+      if (externalParentId) {
+        // Look up external parent's OTEL span from map
+        const parentEntry = this.otelSpanMap.get(externalParentId);
+        if (parentEntry) {
+          parentOtelContext = parentEntry.otelContext;
+        }
+      }
+
+      // Create OTEL span with SpanKind (must be set at creation, immutable)
+      const otelSpan = this.otelTracer.startSpan(
+        options.name,
+        {
+          kind: getSpanKind(options.type),
+        },
+        parentOtelContext,
+      );
+
+      // Create context with this span active
+      const spanContext = otelTrace.setSpan(parentOtelContext, otelSpan);
+
+      // Get OTEL span identifiers
+      const otelSpanContext = otelSpan.spanContext();
+
+      // If no OTEL SDK is registered, the global tracer returns a non-recording
+      // span with an invalid span context (all-zero span/trace IDs). Returning
+      // those IDs would collide across every Mastra span and break downstream
+      // exporters. Bail out so DefaultSpan falls through to its own ID generator.
+      if (!isSpanContextValid(otelSpanContext)) {
+        // End the span we just started so its lifecycle stays clean on
+        // providers that do track non-recording spans.
+        otelSpan.end();
+        return undefined;
+      }
+
+      const spanId = otelSpanContext.spanId;
+      const traceId = otelSpanContext.traceId;
+
+      // Store for later retrieval (for executeWithSpanContext and event handling)
+      this.otelSpanMap.set(spanId, { otelSpan, otelContext: spanContext });
+
+      // Get parentSpanId from parent context if available
+      const parentSpan = otelTrace.getSpan(parentOtelContext);
+      const parentSpanContext = parentSpan?.spanContext();
+      const parentSpanId =
+        parentSpanContext && isSpanContextValid(parentSpanContext) ? parentSpanContext.spanId : undefined;
+
+      this.logger.debug(
+        `[OtelBridge.createSpan] Created span [spanId=${spanId}] [traceId=${traceId}] ` +
+          `[parentSpanId=${parentSpanId}] [type=${options.type}] [mapSize=${this.otelSpanMap.size}]`,
+      );
+
+      return { spanId, traceId, parentSpanId };
+    } catch (error) {
+      this.logger.error('[OtelBridge] Failed to create span:', error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Handle SPAN_ENDED event
+   *
+   * Retrieves the OTEL span created at SPAN_STARTED, sets all final attributes,
+   * events, and status, then ends the span. Cleans up the span map entry.
+   */
+  private async handleSpanEnded(event: TracingEvent): Promise<void> {
+    try {
+      const mastraSpan = event.exportedSpan;
+      const entry = this.otelSpanMap.get(mastraSpan.id);
+
+      if (!entry) {
+        this.logger.warn(`[OtelBridge] No OTEL span found for Mastra span [id=${mastraSpan.id}].`);
+        return;
+      }
+
+      // Remove from map immediately to prevent memory leak
+      this.otelSpanMap.delete(mastraSpan.id);
+
+      if (!this.spanConverter) {
+        return;
+      }
+
+      const { otelSpan } = entry;
+
+      this.logger.debug(`[OtelBridge] Ending OTEL span [mastraId=${mastraSpan.id}] [name=${mastraSpan.name}]`);
+
+      // Use SpanConverter to get consistent span formatting with otel-exporter
+      const readableSpan = await this.spanConverter!.convertSpan(mastraSpan);
+
+      // Update span name to match the converter's formatting
+      otelSpan.updateName(readableSpan.name);
+
+      // Set all attributes from the converter (includes OTEL semantic conventions)
+      for (const [key, value] of Object.entries(readableSpan.attributes)) {
+        if (value !== undefined && value !== null && typeof value !== 'object') {
+          otelSpan.setAttribute(key, value);
+        }
+      }
+
+      // Set status from the converter
+      otelSpan.setStatus(readableSpan.status);
+
+      // Add exception events if present
+      for (const event of readableSpan.events) {
+        if (event.name === 'exception' && event.attributes) {
+          const error = new Error(event.attributes['exception.message'] as string);
+          otelSpan.recordException(error);
+        }
+      }
+
+      // End the span with the actual end time
+      otelSpan.end(mastraSpan.endTime);
+
+      this.logger.debug(
+        `[OtelBridge] Completed OTEL span [mastraId=${mastraSpan.id}] [traceId=${otelSpan.spanContext().traceId}]`,
+      );
+    } catch (error) {
+      this.logger.error('[OtelBridge] Failed to handle SPAN_ENDED:', error);
+    }
+  }
+
+  /**
+   * Execute a function (sync or async) within the OTEL context of a Mastra span.
+   * Retrieves the stored OTEL context for the span and executes the function within it.
+   *
+   * This is the core implementation used by both executeInContext and executeInContextSync.
+   *
+   * @param spanId - The ID of the Mastra span to use as context
+   * @param fn - The function to execute within the span context
+   * @returns The result of the function execution
+   */
+  private executeWithSpanContext<T>(spanId: string, fn: () => T): T {
+    const entry = this.otelSpanMap.get(spanId);
+
+    this.logger.debug(
+      `[OtelBridge.executeWithSpanContext] spanId=${spanId}, ` +
+        `inMap=${!!entry}, ` +
+        `storedOtelSpan=${entry?.otelSpan.spanContext().spanId || 'none'}`,
+    );
+
+    const spanContext = entry?.otelContext;
+    if (spanContext) {
+      return otelContext.with(spanContext, fn);
+    }
+    return fn();
+  }
+
+  /**
+   * Execute an async function within the OTEL context of a Mastra span.
+   *
+   * @param spanId - The ID of the Mastra span to use as context
+   * @param fn - The async function to execute within the span context
+   * @returns The result of the function execution
+   */
+  executeInContext<T>(spanId: string, fn: () => Promise<T>): Promise<T> {
+    return this.executeWithSpanContext(spanId, fn);
+  }
+
+  /**
+   * Execute a synchronous function within the OTEL context of a Mastra span.
+   *
+   * @param spanId - The ID of the Mastra span to use as context
+   * @param fn - The synchronous function to execute within the span context
+   * @returns The result of the function execution
+   */
+  executeInContextSync<T>(spanId: string, fn: () => T): T {
+    return this.executeWithSpanContext(spanId, fn);
+  }
+
+  /**
+   * Force flush any buffered spans without shutting down the bridge.
+   *
+   * Attempts to flush the underlying OTEL tracer provider if it supports
+   * the forceFlush operation. This is useful in serverless environments
+   * where you need to ensure all spans are exported before the runtime
+   * instance is terminated.
+   */
+  async flush(): Promise<void> {
+    await this.flushProvider(otelTrace.getTracerProvider(), 'tracer');
+    await this.flushProvider(otelLogs.getLoggerProvider(), 'logger');
+  }
+
+  private async flushProvider(provider: unknown, label: 'tracer' | 'logger'): Promise<void> {
+    try {
+      if (
+        provider &&
+        typeof provider === 'object' &&
+        'forceFlush' in provider &&
+        typeof (provider as { forceFlush: unknown }).forceFlush === 'function'
+      ) {
+        await (provider as { forceFlush: () => Promise<void> }).forceFlush();
+        this.logger.debug(`[OtelBridge] Flushed ${label} provider`);
+      } else {
+        this.logger.debug(
+          `[OtelBridge] ${label === 'tracer' ? 'Tracer' : 'Logger'} provider does not support forceFlush`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(`[OtelBridge] Failed to flush ${label} provider:`, error);
+    }
+  }
+
+  /**
+   * Shutdown the bridge and clean up resources
+   */
+  async shutdown(): Promise<void> {
+    // Flush before shutdown
+    await this.flush();
+
+    // End any remaining spans
+    for (const [spanId, { otelSpan }] of this.otelSpanMap.entries()) {
+      this.logger.warn(`[OtelBridge] Force-ending span that was not properly closed [id=${spanId}]`);
+      otelSpan.end();
+    }
+    this.otelSpanMap.clear();
+    this.logger.info('[OtelBridge] Shutdown complete');
+  }
+}
