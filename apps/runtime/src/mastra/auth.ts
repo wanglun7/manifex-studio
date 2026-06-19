@@ -285,10 +285,6 @@ function threadIdFromPath(path: string) {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined
 }
 
-function isPlaceholderThreadId(threadId?: string) {
-  return !threadId || threadId === 'new' || threadId === 'undefined' || threadId === 'null'
-}
-
 function isMemoryThreadCollectionPath(path: string) {
   return path === '/memory/threads' || path === '/memory/network/threads'
 }
@@ -768,12 +764,6 @@ export class ManifexAuthz {
   }
 
   async ensureThreadAccess(user: ManifexUser, threadId: string, agentId?: string) {
-    if (isPlaceholderThreadId(threadId)) {
-      if (!agentId) throw new Error('Unknown thread')
-      await this.requireAgent(user, agentId)
-      return
-    }
-
     const thread = await this.store.getThread(threadId)
     if (!thread) {
       if (!agentId) throw new Error('Unknown thread')
@@ -797,11 +787,6 @@ export class ManifexAuthz {
   }
 
   async recordThread(user: ManifexUser, threadId: string, agentId: string) {
-    if (isPlaceholderThreadId(threadId)) {
-      await this.requireAgent(user, agentId)
-      return
-    }
-
     await this.requireAgent(user, agentId)
     await this.store.upsertThread({
       threadId,
