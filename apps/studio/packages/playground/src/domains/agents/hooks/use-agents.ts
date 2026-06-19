@@ -1,43 +1,17 @@
-import type {
-  GetAgentResponse,
-  ReorderModelListParams,
-  UpdateModelInModelListParams,
-  UpdateModelParams,
-} from '@mastra/client-js';
+import type { ReorderModelListParams, UpdateModelInModelListParams, UpdateModelParams } from '@mastra/client-js';
 import { useMastraClient } from '@mastra/react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities';
-import { isAuthenticated } from '@/domains/auth/types';
 import { usePlaygroundStore } from '@/store/playground-store';
 
 export const useAgents = (options?: { enabled?: boolean }) => {
   const client = useMastraClient();
   const { requestContext } = usePlaygroundStore();
-  const { data: capabilities, isLoading: isAuthLoading } = useAuthCapabilities();
-
-  const allowedAgentIds = capabilities && isAuthenticated(capabilities) ? capabilities.access?.agentIds : undefined;
 
   return useQuery({
-    queryKey: ['agents', requestContext, allowedAgentIds?.join(',') ?? 'all'],
-    queryFn: async () => {
-      if (!allowedAgentIds || allowedAgentIds.includes('*')) return client.listAgents(requestContext);
-
-      const uniqueAgentIds = Array.from(new Set(allowedAgentIds));
-      const entries = await Promise.all(
-        uniqueAgentIds.map(async agentId => {
-          try {
-            const agent = await client.getAgent(agentId).details(requestContext);
-            return [agent.id || agentId, agent] as const;
-          } catch {
-            return null;
-          }
-        }),
-      );
-
-      return Object.fromEntries(entries.filter((entry): entry is readonly [string, GetAgentResponse] => Boolean(entry)));
-    },
-    enabled: options?.enabled !== false && !isAuthLoading,
+    queryKey: ['agents', requestContext],
+    queryFn: () => client.listAgents(requestContext),
+    enabled: options?.enabled !== false,
   });
 };
 

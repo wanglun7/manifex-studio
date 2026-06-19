@@ -2,8 +2,7 @@ import type { MastraClient } from '@mastra/client-js';
 import { useMastraClient } from '@mastra/react';
 import { useQuery } from '@tanstack/react-query';
 
-import type { AuthCapabilities, UserAccess } from '../types';
-import { isAuthenticated } from '../types';
+import type { AuthCapabilities } from '../types';
 
 /**
  * Makes a request to the auth capabilities endpoint.
@@ -28,32 +27,7 @@ export async function makeAuthCapabilitiesRequest(client: MastraClient): Promise
     throw new Error(`Failed to fetch auth capabilities: ${response.status}`);
   }
 
-  const capabilities = (await response.json()) as AuthCapabilities;
-  if (!isAuthenticated(capabilities)) return capabilities;
-
-  let access: UserAccess;
-  try {
-    const accessResponse = await fetch(`${baseUrl}/manifex/auth/access`, {
-      credentials: 'include',
-      headers: {
-        ...clientHeaders,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!accessResponse.ok) return capabilities;
-    access = (await accessResponse.json()) as UserAccess;
-  } catch {
-    return capabilities;
-  }
-  return {
-    ...capabilities,
-    capabilities: {
-      ...capabilities.capabilities,
-      rbac: true,
-    },
-    access,
-  };
+  return response.json();
 }
 
 /**

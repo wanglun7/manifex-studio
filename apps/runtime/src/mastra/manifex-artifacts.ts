@@ -4,7 +4,6 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { basename, extname, resolve, sep } from 'node:path'
 import type { ApiRoute } from '@mastra/core/server'
 import { sanitizeSandboxId, resolveThreadWorkspacePathByKey } from './agents/shared.js'
-import { getManifexUser, type ManifexAuthz, type ManifexUser } from './auth.js'
 
 const MAX_UPLOAD_BYTES = Number(process.env.MANIFEX_MAX_UPLOAD_BYTES || 200 * 1024 * 1024)
 
@@ -52,9 +51,7 @@ function contentTypeFor(path: string) {
   return MIME_BY_EXT[extname(path).toLowerCase()] || 'application/octet-stream'
 }
 
-async function uploadAttachments(authz: ManifexAuthz, user: ManifexUser, threadId: string, formData: FormData) {
-  await authz.ensureThreadAccess(user, threadId)
-
+async function uploadAttachments(threadId: string, formData: FormData) {
   const { workspacePath } = resolveWorkspaceFile(threadId, '/workspace')
   const uploadsDir = resolve(workspacePath, 'uploads')
   mkdirSync(uploadsDir, { recursive: true })
@@ -101,61 +98,31 @@ async function uploadAttachments(authz: ManifexAuthz, user: ManifexUser, threadI
         sanitizeSandboxId(threadId),
       )}/artifacts?path=${encodeURIComponent(sandboxPath)}`,
     })
-
-    await authz.recordArtifact(user, {
-      threadId,
-      path: sandboxPath,
-      name: originalName,
-      mimeType: file.type || contentTypeFor(originalName),
-      size: bytes.byteLength,
-      sha256,
-    })
   }
 
   return attachments
 }
 
-function currentUser(c: any) {
-  return getManifexUser(c.get('requestContext')?.get('user'))
-}
-
-function forbidden() {
-  return new Response(JSON.stringify({ error: 'Forbidden' }), {
-    status: 403,
-    headers: { 'content-type': 'application/json' },
-  })
-}
-
-export function createManifexArtifactRoutes(authz: ManifexAuthz): ApiRoute[] {
-  return [
+export const manifexArtifactRoutes: ApiRoute[] = [
   {
     path: '/manifex/threads/:threadId/attachments',
     method: 'POST',
-    requiresAuth: true,
     handler: async c => {
-      const user = currentUser(c)
-      if (!user) return forbidden()
-
       const threadId = c.req.param('threadId')
       const formData = await c.req.raw.formData()
-      const attachments = await uploadAttachments(authz, user, threadId, formData)
+      const attachments = await uploadAttachments(threadId, formData)
       return c.json({ attachments })
     },
   },
   {
     path: '/manifex/threads/:threadId/artifacts',
     method: 'GET',
-    requiresAuth: true,
     handler: async c => {
-      const user = currentUser(c)
-      if (!user) return forbidden()
-
       const threadId = c.req.param('threadId')
       const rawPath = c.req.query('path')
       if (!rawPath) return c.json({ error: 'Missing path' }, 400)
 
       try {
-        await authz.ensureThreadAccess(user, threadId)
         const { absolutePath } = resolveWorkspaceFile(threadId, rawPath)
         const stat = statSync(absolutePath)
         if (!stat.isFile()) return c.json({ error: 'Not a file' }, 404)
@@ -175,5 +142,4 @@ export function createManifexArtifactRoutes(authz: ManifexAuthz): ApiRoute[] {
       }
     },
   },
-  ]
-}
+]

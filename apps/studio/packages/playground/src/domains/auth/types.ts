@@ -54,7 +54,6 @@ export type CapabilityFlags = {
   sso: boolean;
   rbac: boolean;
   acl: boolean;
-  fga?: boolean;
 };
 
 /**
@@ -63,7 +62,6 @@ export type CapabilityFlags = {
 export type UserAccess = {
   roles: string[];
   permissions: string[];
-  agentIds?: string[];
 } | null;
 
 /**
