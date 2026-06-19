@@ -123,15 +123,19 @@ const ROLE_PERMISSIONS: Record<ManifexRole, string[]> = {
 }
 
 const DEFAULT_MEMBER_AGENTS = [
-  'feishuAgent',
-  'dingtalkAgent',
-  'wecomAgent',
-  'wpsAgent',
   'feishu-agent',
   'dingtalk-agent',
   'wecom-agent',
   'wps-agent',
+  'full-access-agent',
 ]
+
+const AGENT_ID_ALIASES: Record<string, string> = {
+  feishuAgent: 'feishu-agent',
+  dingtalkAgent: 'dingtalk-agent',
+  wecomAgent: 'wecom-agent',
+  wpsAgent: 'wps-agent',
+}
 
 function nowIso() {
   return new Date().toISOString()
@@ -184,6 +188,10 @@ function hasPermission(grants: string[], required: string) {
     if (!grantId) return true
     return grantId === requiredId
   })
+}
+
+function normalizeAgentId(agentId: string) {
+  return AGENT_ID_ALIASES[agentId] || agentId
 }
 
 async function hashPassword(password: string) {
@@ -424,7 +432,7 @@ class ManifexAuthStore {
           role: 'member',
           password,
         })
-        await this.ensureAgentAssignments(member, parseCsvEnv('MANIFEX_MEMBER_AGENT_IDS', DEFAULT_MEMBER_AGENTS))
+        await this.syncAgentAssignments(member, parseCsvEnv('MANIFEX_MEMBER_AGENT_IDS', DEFAULT_MEMBER_AGENTS))
       }
     } else if (!IS_PRODUCTION) {
       const member = await this.ensureUser({
@@ -434,7 +442,7 @@ class ManifexAuthStore {
         role: 'member',
         password: optionalEnv('MANIFEX_DEV_MEMBER_PASSWORD') || 'member-token',
       })
-      await this.ensureAgentAssignments(member, parseCsvEnv('MANIFEX_MEMBER_AGENT_IDS', DEFAULT_MEMBER_AGENTS))
+      await this.syncAgentAssignments(member, parseCsvEnv('MANIFEX_MEMBER_AGENT_IDS', DEFAULT_MEMBER_AGENTS))
     }
   }
 
@@ -478,14 +486,40 @@ class ManifexAuthStore {
     return user
   }
 
+  normalizeAgentAssignments(agentIds: string[]) {
+    return Array.from(new Set(agentIds.map(normalizeAgentId).filter(Boolean)))
+  }
+
   async ensureAgentAssignments(user: ManifexUser, agentIds: string[]) {
-    for (const agentId of agentIds) {
+    for (const agentId of this.normalizeAgentAssignments(agentIds)) {
       await this.db.execute({
         sql: `INSERT OR IGNORE INTO agent_assignments (org_id, user_id, agent_id, created_at)
           VALUES (?, ?, ?, ?)`,
         args: [user.orgId, user.id, agentId, nowIso()],
       })
     }
+  }
+
+  async syncAgentAssignments(user: ManifexUser, agentIds: string[]) {
+    const normalizedAgentIds = this.normalizeAgentAssignments(agentIds)
+
+    if (!normalizedAgentIds.length) {
+      await this.db.execute({
+        sql: 'DELETE FROM agent_assignments WHERE org_id = ? AND user_id = ?',
+        args: [user.orgId, user.id],
+      })
+      return
+    }
+
+    if (!normalizedAgentIds.includes('*')) {
+      await this.db.execute({
+        sql: `DELETE FROM agent_assignments
+          WHERE org_id = ? AND user_id = ? AND agent_id NOT IN (${normalizedAgentIds.map(() => '?').join(', ')})`,
+        args: [user.orgId, user.id, ...normalizedAgentIds],
+      })
+    }
+
+    await this.ensureAgentAssignments(user, normalizedAgentIds)
   }
 
   toUser(row: UserRow): ManifexUser {
