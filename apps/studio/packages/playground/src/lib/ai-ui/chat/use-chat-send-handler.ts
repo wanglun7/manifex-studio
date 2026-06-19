@@ -54,6 +54,7 @@ const asHandledStreamChunk = (chunk: unknown): HandledStreamChunk | undefined =>
 interface SendDeps {
   requestContext?: Record<string, unknown>;
   agentVersionId?: string;
+  resourceId?: string;
   threadId?: string;
   modelSettingsArgs: Record<string, unknown>;
   chatWithNetwork?: boolean;
@@ -65,6 +66,7 @@ interface SendDeps {
 
 interface UseChatSendHandlerArgs {
   agentId: string;
+  resourceId?: string;
   requestContext?: Record<string, unknown>;
   agentVersionId?: string;
   threadId?: string;
@@ -109,6 +111,7 @@ const didUpdateWorkingMemory = (chunk: any) =>
 
 export const useChatSendHandler = ({
   agentId,
+  resourceId,
   requestContext,
   agentVersionId,
   threadId,
@@ -138,6 +141,7 @@ export const useChatSendHandler = ({
   const sendDepsRef = useRef<SendDeps>({
     requestContext,
     agentVersionId,
+    resourceId,
     threadId,
     modelSettingsArgs,
     chatWithNetwork,
@@ -149,6 +153,7 @@ export const useChatSendHandler = ({
   sendDepsRef.current = {
     requestContext,
     agentVersionId,
+    resourceId,
     threadId,
     modelSettingsArgs,
     chatWithNetwork,
@@ -161,8 +166,9 @@ export const useChatSendHandler = ({
   const completeObservationalMemoryBuffering = useCallback(
     (currentThreadId?: string) => {
       if (!currentThreadId || !sendDepsRef.current.isOMEnabled) return;
+      const currentResourceId = sendDepsRef.current.resourceId || agentId;
       baseClient
-        .awaitBufferStatus({ agentId, resourceId: agentId, threadId: currentThreadId })
+        .awaitBufferStatus({ agentId, resourceId: currentResourceId, threadId: currentThreadId })
         .then(result => {
           setMessages(prev => injectBufferingEnds(prev, result?.record));
           void queryClient.invalidateQueries({ queryKey: ['observational-memory', agentId] });

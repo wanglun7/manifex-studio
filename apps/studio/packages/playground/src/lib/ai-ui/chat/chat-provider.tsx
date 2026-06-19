@@ -41,6 +41,7 @@ export function ChatProvider({
   modelVersion,
   agentVersionId,
   supportsMemory,
+  resourceId,
 }: Readonly<{ children: ReactNode }> & ChatProps) {
   const { settings: tracingSettings } = useTracingSettings();
 
@@ -222,6 +223,7 @@ export function ChatProvider({
 
   const { send, cancel } = useChatSendHandler({
     agentId,
+    resourceId,
     requestContext,
     agentVersionId,
     threadId,

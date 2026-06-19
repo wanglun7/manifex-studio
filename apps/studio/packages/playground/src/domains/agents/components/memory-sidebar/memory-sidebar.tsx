@@ -6,6 +6,7 @@ import { ChatThreads } from '@/domains/agents/components/chat-threads';
 
 export interface MemorySidebarProps {
   agentId: string;
+  resourceId: string;
   threadId: string;
   threads?: StorageThreadType[];
   isLoading: boolean;
@@ -16,6 +17,7 @@ export interface MemorySidebarProps {
 
 export function MemorySidebar({
   agentId,
+  resourceId,
   threadId,
   threads,
   isLoading,
@@ -55,7 +57,7 @@ export function MemorySidebar({
             </TabContent>
 
             <TabContent value="configuration" className="min-h-0 flex-1 overflow-y-auto py-0">
-              <AgentMemory agentId={agentId} threadId={threadId} memoryType={memoryType} />
+              <AgentMemory agentId={agentId} resourceId={resourceId} threadId={threadId} memoryType={memoryType} />
             </TabContent>
           </Tabs>
         ) : (

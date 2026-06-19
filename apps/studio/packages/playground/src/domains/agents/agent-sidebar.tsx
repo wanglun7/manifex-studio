@@ -5,6 +5,7 @@ import { useLinkComponent } from '@/lib/framework';
 
 export function AgentSidebar({
   agentId,
+  resourceId,
   threadId,
   threads,
   isLoading,
@@ -12,6 +13,7 @@ export function AgentSidebar({
   hasMemory,
 }: {
   agentId: string;
+  resourceId: string;
   threadId: string;
   threads?: StorageThreadType[];
   isLoading: boolean;
@@ -31,6 +33,7 @@ export function AgentSidebar({
   return (
     <MemorySidebar
       agentId={agentId}
+      resourceId={resourceId}
       threadId={threadId}
       threads={threads}
       isLoading={isLoading}

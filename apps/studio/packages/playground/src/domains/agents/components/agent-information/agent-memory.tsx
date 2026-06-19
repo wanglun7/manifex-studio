@@ -17,11 +17,12 @@ import { useLinkComponent } from '@/lib/framework';
 
 interface AgentMemoryProps {
   agentId: string;
+  resourceId?: string;
   threadId: string;
   memoryType?: 'local' | 'gateway';
 }
 
-export function AgentMemory({ agentId, threadId, memoryType }: AgentMemoryProps) {
+export function AgentMemory({ agentId, resourceId, threadId, memoryType }: AgentMemoryProps) {
   const isGatewayMemory = memoryType === 'gateway';
   const { threadInput: chatInputValue } = useThreadInput();
 
@@ -29,7 +30,7 @@ export function AgentMemory({ agentId, threadId, memoryType }: AgentMemoryProps)
 
   // Resolve the thread's actual resourceId (may differ from agentId for externally-created threads)
   const { data: thread } = useThread({ threadId, agentId });
-  const effectiveResourceId = thread?.resourceId ?? agentId;
+  const effectiveResourceId = thread?.resourceId ?? resourceId ?? agentId;
 
   // Get memory config to check if semantic recall is enabled
   const { data, isLoading: isConfigLoading } = useMemoryConfig(agentId);

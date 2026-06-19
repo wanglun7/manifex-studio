@@ -11,6 +11,8 @@ import { WorkingMemoryProvider } from '@/domains/agents/context/agent-working-me
 import { BrowserSessionProvider } from '@/domains/agents/context/browser-session-provider';
 import { BrowserToolCallsProvider } from '@/domains/agents/context/browser-tool-calls-context';
 import { useAgent } from '@/domains/agents/hooks/use-agent';
+import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities';
+import { isAuthenticated } from '@/domains/auth/types';
 import { ThreadInputProvider } from '@/domains/conversation/context/ThreadInputContext';
 import { useMemory, useThreads } from '@/domains/memory/hooks/use-memory';
 import { TracingSettingsProvider } from '@/domains/observability/context/tracing-settings-context';
@@ -22,6 +24,7 @@ function AgentSession() {
   const { agentId, threadId } = useParams();
   const [searchParams] = useSearchParams();
   const { data: agent, isLoading: isAgentLoading } = useAgent(agentId!);
+  const { data: authCapabilities } = useAuthCapabilities();
   const { data: memory } = useMemory(agentId!);
   const navigate = useNavigate();
   const isNewThread = threadId === 'new';
@@ -30,9 +33,12 @@ function AgentSession() {
   const newThreadId = useMemo(() => uuid(), [threadId]);
 
   const hasMemory = Boolean(memory?.result);
+  const userResourceId =
+    authCapabilities && isAuthenticated(authCapabilities) ? authCapabilities.access?.resourceId : undefined;
+  const memoryResourceId = userResourceId ?? agentId!;
 
   const { refetch: refreshThreads } = useThreads({
-    resourceId: agentId!,
+    resourceId: memoryResourceId,
     agentId: agentId!,
     isMemoryEnabled: hasMemory,
   });
@@ -98,7 +104,7 @@ function AgentSession() {
     <TracingSettingsProvider entityId={agentId!} entityType="agent">
       <AgentSettingsProvider agentId={agentId!} defaultSettings={defaultSettings}>
         <SchemaRequestContextProvider>
-          <WorkingMemoryProvider agentId={agentId!} threadId={actualThreadId} resourceId={agentId!}>
+          <WorkingMemoryProvider agentId={agentId!} threadId={actualThreadId} resourceId={memoryResourceId}>
             <BrowserToolCallsProvider key={`browser-${agentId}-${actualThreadId}`}>
               <BrowserSessionProvider
                 key={`session-${agentId}-${actualThreadId}`}
@@ -116,6 +122,7 @@ function AgentSession() {
                             key={actualThreadId}
                             agentId={agentId!}
                             agentName={agent?.name}
+                            resourceId={memoryResourceId}
                             modelVersion={agent?.modelVersion}
                             supportsMemory={agent?.supportsMemory}
                             threadId={actualThreadId}
