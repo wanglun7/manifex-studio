@@ -7,6 +7,7 @@
     "dev:studio": "pnpm -C apps/studio dev:playground",
     "docker:build-runtime": "npm --prefix apps/runtime run docker:build-runtime",
     "skills:sync-lark": "npm --prefix apps/runtime run skills:sync-lark",
+    "skills:sync-enterprise": "npm --prefix apps/runtime run skills:sync-enterprise",
     "test:runtime": "npm --prefix apps/runtime run test:skills && npm --prefix apps/runtime run test:sandbox-lifecycle && npm --prefix apps/runtime run test:docker-thread-isolation",
     "test:studio": "pnpm -C apps/studio --filter @internal/playground test src/lib/ai-ui/messages/__tests__/message-row.test.tsx --run"
   }

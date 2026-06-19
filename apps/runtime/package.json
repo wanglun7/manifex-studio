@@ -7,6 +7,7 @@
     "dev:raw": "mastra dev",
     "docker:build-runtime": "docker build -f docker/agent-runtime.Dockerfile -t manifex-agent-runtime:latest .",
     "skills:sync-lark": "node scripts/sync-lark-skills.mjs",
+    "skills:sync-enterprise": "node scripts/sync-enterprise-skills.mjs",
     "test:sandbox-lifecycle": "tsx tests/smoke/verify-sandbox-lifecycle.ts",
     "test:docker-thread-isolation": "tsx tests/smoke/verify-docker-thread-isolation.ts",
     "test:local-sandbox": "tsx verify-local-sandbox-bypass.ts",

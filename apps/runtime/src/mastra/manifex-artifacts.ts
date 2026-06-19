@@ -3,7 +3,7 @@ import { mkdirSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, extname, resolve, sep } from 'node:path'
 import type { ApiRoute } from '@mastra/core/server'
-import { sanitizeSandboxId, resolveThreadWorkspacePathByKey } from './agents/full-access-agent.js'
+import { sanitizeSandboxId, resolveThreadWorkspacePathByKey } from './agents/shared.js'
 
 const MAX_UPLOAD_BYTES = Number(process.env.MANIFEX_MAX_UPLOAD_BYTES || 200 * 1024 * 1024)
 

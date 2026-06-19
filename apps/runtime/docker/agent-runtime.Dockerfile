@@ -58,7 +58,12 @@ RUN python3 -m pip install --no-cache-dir \
     xlsxwriter \
     requests
 
-RUN npm install -g @larksuite/cli@latest
+RUN npm install -g \
+    @larksuite/cli@latest \
+    dingtalk-workspace-cli@latest \
+    @wecom/cli@latest \
+  && curl -fsSL https://raw.githubusercontent.com/wps365-open/cli/main/install.sh \
+    | WPS365_INSTALL_DIR=/usr/local/bin bash
 
 WORKDIR /workspace
 

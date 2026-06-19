@@ -9,24 +9,57 @@ import { MastraEditor } from '@mastra/editor'
 import { LibSQLStore } from '@mastra/libsql'
 import { Observability, MastraStorageExporter } from '@mastra/observability'
 import {
-  feishuAgent,
-  feishuWorkspace,
   fullAccessAgent,
   fullAccessWorkspace,
+} from './agents/full-access-agent.js'
+import {
+  feishuAgent,
+  feishuWorkspace,
+} from './agents/feishu-agent.js'
+import {
+  dingtalkAgent,
+  dingtalkWorkspace,
+} from './agents/dingtalk-agent.js'
+import {
+  wecomAgent,
+  wecomWorkspace,
+} from './agents/wecom-agent.js'
+import {
+  wpsAgent,
+  wpsWorkspace,
+} from './agents/wps-agent.js'
+import {
   resolveThreadWorkspacePathByKey,
   sanitizeSandboxId,
   threadSandboxManager,
-} from './agents/full-access-agent.js'
+} from './agents/shared.js'
 import { manifexArtifactRoutes } from './manifex-artifacts.js'
 import { searchMcpClient } from './mcp/search-mcp.js'
-import { artifactsRoot, mastraStudioArtifactsRoot, runtimeRoot } from './paths.js'
+import { artifactsRoot, mastraStudioArtifactsRoot } from './paths.js'
 
 mkdirSync(mastraStudioArtifactsRoot, { recursive: true })
 
 await fullAccessWorkspace.init()
 await feishuWorkspace.init()
+await dingtalkWorkspace.init()
+await wecomWorkspace.init()
+await wpsWorkspace.init()
 await threadSandboxManager.load()
 threadSandboxManager.start()
+
+const workspaces = [
+  fullAccessWorkspace,
+  feishuWorkspace,
+  dingtalkWorkspace,
+  wecomWorkspace,
+  wpsWorkspace,
+]
+
+threadSandboxManager.onInvalidate((threadId) => {
+  for (const workspace of workspaces) {
+    workspace.clearSandboxCache(threadId)
+  }
+})
 
 function valueToId(value: unknown) {
   if (typeof value === 'string' && value.trim()) return value
@@ -54,6 +87,9 @@ export const mastra = new Mastra({
   agents: {
     fullAccessAgent,
     feishuAgent,
+    dingtalkAgent,
+    wecomAgent,
+    wpsAgent,
   },
   mcpServers: {
     ...searchMcpClient.toMCPServerProxies(),
@@ -64,8 +100,7 @@ export const mastra = new Mastra({
     url: `file:${resolve(artifactsRoot, 'mastra-studio/mastra.db')}`,
   }),
   editor: new MastraEditor({
-    source: 'code',
-    codePath: resolve(runtimeRoot, 'src/mastra/editor'),
+    source: 'db',
   }),
   observability: new Observability({
     configs: {
