@@ -8,14 +8,7 @@ export const useAgent = (agentId?: string) => {
 
   return useQuery({
     queryKey: ['agent', agentId, requestContext],
-    queryFn: async () => {
-      if (!agentId) return null;
-      const agent = await client.getAgent(agentId).details(requestContext);
-      return {
-        ...agent,
-        id: agent.id || agentId,
-      };
-    },
+    queryFn: () => (agentId ? client.getAgent(agentId).details(requestContext) : null),
     retry: false,
     enabled: Boolean(agentId),
   });

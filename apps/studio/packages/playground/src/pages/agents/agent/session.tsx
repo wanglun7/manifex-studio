@@ -22,11 +22,10 @@ import type { AgentSettingsType } from '@/types';
 
 function AgentSession() {
   const { agentId, threadId } = useParams();
-  const currentAgentId = agentId && agentId !== 'undefined' ? agentId : undefined;
   const [searchParams] = useSearchParams();
-  const { data: agent, isLoading: isAgentLoading } = useAgent(currentAgentId);
+  const { data: agent, isLoading: isAgentLoading } = useAgent(agentId!);
   const { data: authCapabilities } = useAuthCapabilities();
-  const { data: memory } = useMemory(currentAgentId);
+  const { data: memory } = useMemory(agentId!);
   const navigate = useNavigate();
   const isNewThread = threadId === 'new';
 
@@ -36,25 +35,20 @@ function AgentSession() {
   const hasMemory = Boolean(memory?.result);
   const userResourceId =
     authCapabilities && isAuthenticated(authCapabilities) ? authCapabilities.access?.resourceId : undefined;
-  const memoryResourceId = userResourceId ?? currentAgentId ?? '';
+  const memoryResourceId = userResourceId ?? agentId!;
 
   const { refetch: refreshThreads } = useThreads({
     resourceId: memoryResourceId,
-    agentId: currentAgentId ?? '',
+    agentId: agentId!,
     isMemoryEnabled: hasMemory,
   });
 
   useEffect(() => {
-    if (!currentAgentId) {
-      void navigate('/agents', { replace: true });
-      return;
-    }
-
     if (!hasMemory) return;
     if (threadId) return;
 
-    void navigate(`/agents/${currentAgentId}/session/new`);
-  }, [hasMemory, threadId, currentAgentId, navigate]);
+    void navigate(`/agents/${agentId}/session/new`);
+  }, [hasMemory, threadId, agentId, navigate]);
 
   const messageId = searchParams.get('messageId') ?? undefined;
 
@@ -92,10 +86,6 @@ function AgentSession() {
     return null;
   }
 
-  if (!currentAgentId) {
-    return null;
-  }
-
   if (!agent) {
     return <div className="text-center py-4">Agent not found</div>;
   }
@@ -106,19 +96,19 @@ function AgentSession() {
     await refreshThreads();
 
     if (isNewThread) {
-      void navigate(`/agents/${currentAgentId}/session/${newThreadId}`);
+      void navigate(`/agents/${agentId}/session/${newThreadId}`);
     }
   };
 
   return (
-    <TracingSettingsProvider entityId={currentAgentId} entityType="agent">
-      <AgentSettingsProvider agentId={currentAgentId} defaultSettings={defaultSettings}>
+    <TracingSettingsProvider entityId={agentId!} entityType="agent">
+      <AgentSettingsProvider agentId={agentId!} defaultSettings={defaultSettings}>
         <SchemaRequestContextProvider>
-          <WorkingMemoryProvider agentId={currentAgentId} threadId={actualThreadId} resourceId={memoryResourceId}>
-            <BrowserToolCallsProvider key={`browser-${currentAgentId}-${actualThreadId}`}>
+          <WorkingMemoryProvider agentId={agentId!} threadId={actualThreadId} resourceId={memoryResourceId}>
+            <BrowserToolCallsProvider key={`browser-${agentId}-${actualThreadId}`}>
               <BrowserSessionProvider
-                key={`session-${currentAgentId}-${actualThreadId}`}
-                agentId={currentAgentId}
+                key={`session-${agentId}-${actualThreadId}`}
+                agentId={agentId!}
                 threadId={actualThreadId}
                 enabled={Boolean(agent?.browserTools?.length)}
               >
@@ -130,7 +120,7 @@ function AgentSession() {
                         <div className="grid overflow-y-auto relative h-full pt-6">
                           <AgentChat
                             key={actualThreadId}
-                            agentId={currentAgentId}
+                            agentId={agentId!}
                             agentName={agent?.name}
                             resourceId={memoryResourceId}
                             modelVersion={agent?.modelVersion}
