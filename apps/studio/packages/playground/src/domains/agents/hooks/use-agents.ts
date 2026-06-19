@@ -11,6 +11,11 @@ import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities'
 import { isAuthenticated } from '@/domains/auth/types';
 import { usePlaygroundStore } from '@/store/playground-store';
 
+const withAgentId = (agentId: string, agent: GetAgentResponse): GetAgentResponse => ({
+  ...agent,
+  id: agent.id || agentId,
+});
+
 export const useAgents = (options?: { enabled?: boolean }) => {
   const client = useMastraClient();
   const { requestContext } = usePlaygroundStore();
@@ -21,14 +26,17 @@ export const useAgents = (options?: { enabled?: boolean }) => {
   return useQuery({
     queryKey: ['agents', requestContext, allowedAgentIds?.join(',') ?? 'all'],
     queryFn: async () => {
-      if (!allowedAgentIds || allowedAgentIds.includes('*')) return client.listAgents(requestContext);
+      if (!allowedAgentIds || allowedAgentIds.includes('*')) {
+        const agents = await client.listAgents(requestContext);
+        return Object.fromEntries(Object.entries(agents).map(([agentId, agent]) => [agentId, withAgentId(agentId, agent)]));
+      }
 
       const uniqueAgentIds = Array.from(new Set(allowedAgentIds));
       const entries = await Promise.all(
         uniqueAgentIds.map(async agentId => {
           try {
             const agent = await client.getAgent(agentId).details(requestContext);
-            return [agent.id || agentId, agent] as const;
+            return [agent.id || agentId, withAgentId(agentId, agent)] as const;
           } catch {
             return null;
           }

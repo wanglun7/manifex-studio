@@ -25,10 +25,11 @@ import type { AgentSettingsType } from '@/types';
 
 function Agent() {
   const { agentId, threadId } = useParams();
+  const currentAgentId = agentId && agentId !== 'undefined' ? agentId : undefined;
   const [searchParams] = useSearchParams();
-  const { data: agent, isLoading: isAgentLoading, error } = useAgent(agentId!);
+  const { data: agent, isLoading: isAgentLoading, error } = useAgent(currentAgentId);
   const { data: authCapabilities } = useAuthCapabilities();
-  const { data: memory } = useMemory(agentId!);
+  const { data: memory } = useMemory(currentAgentId);
   const navigate = useNavigate();
   const isNewThread = threadId === 'new';
 
@@ -40,13 +41,13 @@ function Agent() {
   const hasMemory = Boolean(memory?.result);
   const userResourceId =
     authCapabilities && isAuthenticated(authCapabilities) ? authCapabilities.access?.resourceId : undefined;
-  const memoryResourceId = userResourceId ?? agentId!;
+  const memoryResourceId = userResourceId ?? currentAgentId ?? '';
 
   const {
     data: threads,
     isLoading: isThreadsLoading,
     refetch: refreshThreads,
-  } = useThreads({ agentId: agentId!, isMemoryEnabled: hasMemory, resourceId: memoryResourceId });
+  } = useThreads({ agentId: currentAgentId ?? '', isMemoryEnabled: hasMemory, resourceId: memoryResourceId });
 
   const sidebarThreads = useMemo(
     () =>
@@ -59,11 +60,16 @@ function Agent() {
   );
 
   useEffect(() => {
+    if (!currentAgentId) {
+      void navigate('/agents', { replace: true });
+      return;
+    }
+
     if (threadId) return;
 
     // Normalize /agents/:agentId to /agents/:agentId/chat/new
-    void navigate(`/agents/${agentId}/chat/new`);
-  }, [threadId, agentId, navigate]);
+    void navigate(`/agents/${currentAgentId}/chat/new`);
+  }, [threadId, currentAgentId, navigate]);
 
   const messageId = searchParams.get('messageId') ?? undefined;
 
@@ -121,6 +127,10 @@ function Agent() {
     return null;
   }
 
+  if (!currentAgentId) {
+    return null;
+  }
+
   if (!agent) {
     return <div className="text-center py-4">Agent not found</div>;
   }
@@ -135,30 +145,30 @@ function Agent() {
     await refreshThreads();
 
     if (isNewThread) {
-      void navigate(`/agents/${agentId}/chat/${newThreadId}`);
+      void navigate(`/agents/${currentAgentId}/chat/${newThreadId}`);
     }
   };
 
   return (
-    <TracingSettingsProvider entityId={agentId!} entityType="agent">
-      <AgentSettingsProvider agentId={agentId!} defaultSettings={defaultSettings}>
+    <TracingSettingsProvider entityId={currentAgentId} entityType="agent">
+      <AgentSettingsProvider agentId={currentAgentId} defaultSettings={defaultSettings}>
         <SchemaRequestContextProvider>
-          <WorkingMemoryProvider agentId={agentId!} threadId={actualThreadId!} resourceId={memoryResourceId}>
-            <BrowserToolCallsProvider key={`browser-${agentId}-${actualThreadId}`}>
+          <WorkingMemoryProvider agentId={currentAgentId} threadId={actualThreadId!} resourceId={memoryResourceId}>
+            <BrowserToolCallsProvider key={`browser-${currentAgentId}-${actualThreadId}`}>
               <BrowserSessionProvider
-                key={`session-${agentId}-${actualThreadId}`}
-                agentId={agentId!}
+                key={`session-${currentAgentId}-${actualThreadId}`}
+                agentId={currentAgentId}
                 threadId={actualThreadId!}
                 enabled={Boolean(agent?.browserTools?.length)}
               >
                 <ThreadInputProvider>
                   <ObservationalMemoryProvider>
-                    <ActivatedSkillsProvider key={`${agentId}-${actualThreadId}`}>
+                    <ActivatedSkillsProvider key={`${currentAgentId}-${actualThreadId}`}>
                       <AgentLayout
-                        agentId={agentId!}
+                        agentId={currentAgentId}
                         leftSlot={
                           <AgentSidebar
-                            agentId={agentId!}
+                            agentId={currentAgentId}
                             resourceId={memoryResourceId}
                             threadId={actualThreadId!}
                             threads={sidebarThreads}
@@ -168,11 +178,11 @@ function Agent() {
                           />
                         }
                         browserOverlay={<BrowserViewPanel />}
-                        rightSlot={<AgentInformation agentId={agentId!} />}
+                        rightSlot={<AgentInformation agentId={currentAgentId} />}
                       >
                         <AgentChat
                           key={actualThreadId!}
-                          agentId={agentId!}
+                          agentId={currentAgentId}
                           agentName={agent?.name}
                           resourceId={memoryResourceId}
                           modelVersion={agent?.modelVersion}
