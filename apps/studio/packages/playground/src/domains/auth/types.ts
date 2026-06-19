@@ -64,7 +64,6 @@ export type UserAccess = {
   roles: string[];
   permissions: string[];
   agentIds?: string[];
-  resourceId?: string;
 } | null;
 
 /**

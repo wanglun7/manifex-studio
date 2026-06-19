@@ -26,7 +26,6 @@ export type ManifexAccess = {
   roles: ManifexRole[]
   permissions: string[]
   agentIds: string[]
-  resourceId: string
 }
 
 type StoredSession = Session & {
@@ -285,15 +284,6 @@ function threadIdFromPath(path: string) {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined
 }
 
-function isMemoryThreadCollectionPath(path: string) {
-  return path === '/memory/threads' || path === '/memory/network/threads'
-}
-
-function queryParam(request: Request | undefined, name: string) {
-  if (!request) return undefined
-  return new URL(request.url).searchParams.get(name) || undefined
-}
-
 function threadIdFromBody(body?: Record<string, unknown>) {
   const memory = body?.memory && typeof body.memory === 'object'
     ? (body.memory as Record<string, unknown>)
@@ -316,14 +306,6 @@ function resourceIdFromBody(body?: Record<string, unknown>) {
     valueToId(body?.resourceId) ||
     valueToId(body?.resource)
   )
-}
-
-function agentIdFromMemoryRequest(request: Request | undefined, body?: Record<string, unknown>) {
-  return queryParam(request, 'agentId') || valueToId(body?.agentId)
-}
-
-function resourceIdFromMemoryRequest(request: Request | undefined, body?: Record<string, unknown>) {
-  return queryParam(request, 'resourceId') || resourceIdFromBody(body)
 }
 
 class ManifexAuthStore {
@@ -737,7 +719,6 @@ export class ManifexAuthz {
       roles: [user.role],
       permissions: ROLE_PERMISSIONS[user.role],
       agentIds: await this.store.getAssignedAgentIds(user),
-      resourceId: this.resourceIdFor(user),
     }
   }
 
@@ -854,28 +835,9 @@ export class ManifexAuthProvider extends MastraAuthProvider<ManifexUser> {
         return true
       }
 
-      if (isMemoryThreadCollectionPath(path)) {
-        const method = webRequest?.method || 'GET'
-        await this.authz.require(user, method === 'GET' ? 'memory:read' : 'memory:write')
-
-        const currentResourceId = this.authz.resourceIdFor(user)
-        const requestedResourceId = resourceIdFromMemoryRequest(webRequest, body)
-        if (!requestedResourceId || requestedResourceId !== currentResourceId) return false
-
-        const memoryAgentId = agentIdFromMemoryRequest(webRequest, body)
-        if (memoryAgentId) await this.authz.requireAgent(user, memoryAgentId)
-
-        const threadId = threadIdFromBody(body) || valueToId(body?.id)
-        if (method !== 'GET' && threadId && memoryAgentId) {
-          await this.authz.recordThread(user, threadId, memoryAgentId)
-        }
-
-        return true
-      }
-
       const memoryThreadId = threadIdFromPath(path)
       if (memoryThreadId) {
-        await this.authz.ensureThreadAccess(user, memoryThreadId, agentIdFromMemoryRequest(webRequest, body))
+        await this.authz.ensureThreadAccess(user, memoryThreadId)
         return true
       }
 

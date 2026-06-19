@@ -10,7 +10,6 @@ import type { ChatProps } from '@/types';
 export const AgentChat = ({
   agentId,
   agentName,
-  resourceId,
   threadId,
   memory,
   refreshThreadList,
@@ -70,7 +69,6 @@ export const AgentChat = ({
       modelVersion={modelVersion}
       agentVersionId={agentVersionId}
       supportsMemory={supportsMemory}
-      resourceId={resourceId}
       threadId={threadId}
       initialMessages={messages}
       refreshThreadList={refreshThreadList}

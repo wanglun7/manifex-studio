@@ -14,8 +14,6 @@ import { WorkingMemoryProvider } from '@/domains/agents/context/agent-working-me
 import { BrowserSessionProvider } from '@/domains/agents/context/browser-session-provider';
 import { BrowserToolCallsProvider } from '@/domains/agents/context/browser-tool-calls-context';
 import { useAgent } from '@/domains/agents/hooks/use-agent';
-import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities';
-import { isAuthenticated } from '@/domains/auth/types';
 import { ThreadInputProvider } from '@/domains/conversation/context/ThreadInputContext';
 import { useMemory, useThreads } from '@/domains/memory/hooks/use-memory';
 import { TracingSettingsProvider } from '@/domains/observability/context/tracing-settings-context';
@@ -27,7 +25,6 @@ function Agent() {
   const { agentId, threadId } = useParams();
   const [searchParams] = useSearchParams();
   const { data: agent, isLoading: isAgentLoading, error } = useAgent(agentId!);
-  const { data: authCapabilities } = useAuthCapabilities();
   const { data: memory } = useMemory(agentId!);
   const navigate = useNavigate();
   const isNewThread = threadId === 'new';
@@ -38,15 +35,12 @@ function Agent() {
   const newThreadId = useMemo(() => uuid(), [threadId]);
 
   const hasMemory = Boolean(memory?.result);
-  const userResourceId =
-    authCapabilities && isAuthenticated(authCapabilities) ? authCapabilities.access?.resourceId : undefined;
-  const memoryResourceId = userResourceId ?? agentId!;
 
   const {
     data: threads,
     isLoading: isThreadsLoading,
     refetch: refreshThreads,
-  } = useThreads({ agentId: agentId!, isMemoryEnabled: hasMemory, resourceId: memoryResourceId });
+  } = useThreads({ agentId: agentId!, isMemoryEnabled: hasMemory, resourceId: agentId! });
 
   const sidebarThreads = useMemo(
     () =>
@@ -143,7 +137,7 @@ function Agent() {
     <TracingSettingsProvider entityId={agentId!} entityType="agent">
       <AgentSettingsProvider agentId={agentId!} defaultSettings={defaultSettings}>
         <SchemaRequestContextProvider>
-          <WorkingMemoryProvider agentId={agentId!} threadId={actualThreadId!} resourceId={memoryResourceId}>
+          <WorkingMemoryProvider agentId={agentId!} threadId={actualThreadId!} resourceId={agentId!}>
             <BrowserToolCallsProvider key={`browser-${agentId}-${actualThreadId}`}>
               <BrowserSessionProvider
                 key={`session-${agentId}-${actualThreadId}`}
@@ -159,7 +153,6 @@ function Agent() {
                         leftSlot={
                           <AgentSidebar
                             agentId={agentId!}
-                            resourceId={memoryResourceId}
                             threadId={actualThreadId!}
                             threads={sidebarThreads}
                             isLoading={isThreadsLoading}
@@ -174,7 +167,6 @@ function Agent() {
                           key={actualThreadId!}
                           agentId={agentId!}
                           agentName={agent?.name}
-                          resourceId={memoryResourceId}
                           modelVersion={agent?.modelVersion}
                           supportsMemory={agent?.supportsMemory}
                           threadId={actualThreadId!}
