@@ -35,17 +35,7 @@ export const useAgents = (options?: { enabled?: boolean }) => {
         }),
       );
 
-      const agents = entries.filter((entry): entry is readonly [string, GetAgentResponse] => Boolean(entry));
-      const seenAgents = new Set<string>();
-
-      return Object.fromEntries(
-        agents.filter(([, agent]) => {
-          const agentKey = `${agent.name}:${agent.modelId}`;
-          if (seenAgents.has(agentKey)) return false;
-          seenAgents.add(agentKey);
-          return true;
-        }),
-      );
+      return Object.fromEntries(entries.filter((entry): entry is readonly [string, GetAgentResponse] => Boolean(entry)));
     },
     enabled: options?.enabled !== false && !isAuthLoading,
   });
