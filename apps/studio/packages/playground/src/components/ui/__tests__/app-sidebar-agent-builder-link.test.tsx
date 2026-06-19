@@ -100,6 +100,18 @@ function systemPackagesHandler() {
   );
 }
 
+function systemPackagesWithCoreVersionHandler(onRequest?: () => void) {
+  return http.get(`${BASE_URL}/api/system/packages`, () => {
+    onRequest?.();
+    return HttpResponse.json({
+      isDev: true,
+      packages: [{ name: '@mastra/core', version: '1.42.0' }],
+      cmsEnabled: false,
+      observabilityEnabled: false,
+    });
+  });
+}
+
 const StubLink = ({ children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
   <a {...props}>{children}</a>
 );
@@ -350,5 +362,73 @@ describe('AppSidebar — RBAC link gating while permission data loads', () => {
 
     const agentsLink = await screen.findByRole('link', { name: /agents/i });
     expect(agentsLink.getAttribute('href')).toBe('/agents');
+  });
+});
+
+describe('AppSidebar — developer settings link', () => {
+  it('does not render Settings for RBAC member users', async () => {
+    const memberCapabilities = {
+      enabled: true,
+      login: { type: 'credentials' as const },
+      user: { id: 'member-2', email: 'member2@example.com' },
+      capabilities: { user: true, session: true, sso: false, rbac: true, acl: false },
+      access: { roles: ['member'], permissions: ['agents:read'] },
+    } satisfies AuthCapabilities;
+
+    server.use(authHandler(memberCapabilities), builderHandler(builderDisabled), systemPackagesHandler());
+
+    renderSidebar();
+
+    const agentsLink = await screen.findByRole('link', { name: /agents/i });
+    expect(agentsLink.getAttribute('href')).toBe('/agents');
+    expect(screen.queryByRole('link', { name: /settings/i })).toBeNull();
+  });
+
+  it('renders Settings for wildcard admin users', async () => {
+    const wildcardCapabilities = {
+      enabled: true,
+      login: { type: 'credentials' as const },
+      user: { id: 'superuser-2', email: 'superuser2@example.com' },
+      capabilities: { user: true, session: true, sso: false, rbac: true, acl: false },
+      access: { roles: ['superuser'], permissions: ['*'] },
+    } satisfies AuthCapabilities;
+
+    server.use(authHandler(wildcardCapabilities), builderHandler(builderDisabled), systemPackagesHandler());
+
+    renderSidebar();
+
+    const settingsLink = await screen.findByRole('link', { name: /settings/i });
+    expect(settingsLink.getAttribute('href')).toBe('/settings');
+  });
+});
+
+describe('AppSidebar — version footer', () => {
+  it('does not render the Mastra package version footer', async () => {
+    let packagesRequested = 0;
+
+    server.use(
+      authHandler(authDisabledCapabilities),
+      builderHandler(builderDisabled),
+      systemPackagesWithCoreVersionHandler(() => {
+        packagesRequested += 1;
+      }),
+      http.get('https://registry.npmjs.org/%40mastra%2Fcore', () =>
+        HttpResponse.json({
+          'dist-tags': { latest: '1.42.0' },
+          versions: { '1.42.0': {} },
+        }),
+      ),
+    );
+
+    renderSidebar();
+
+    await waitFor(() => {
+      expect(packagesRequested).toBeGreaterThan(0);
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    await waitFor(() => {
+      expect(screen.queryByText('v1.42.0')).toBeNull();
+    });
   });
 });

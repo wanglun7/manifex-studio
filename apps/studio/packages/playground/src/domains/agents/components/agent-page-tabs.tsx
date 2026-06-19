@@ -11,6 +11,10 @@ interface AgentPageTabsProps {
   showPlayground?: boolean;
   showObservability?: boolean;
   showChannels?: boolean;
+  showEditorTab?: boolean;
+  showEvaluateTab?: boolean;
+  showReviewTab?: boolean;
+  showTracesTab?: boolean;
   reviewBadge?: number;
   rightSlot?: React.ReactNode;
 }
@@ -86,6 +90,10 @@ export function AgentPageTabs({
   showPlayground = false,
   showObservability = false,
   showChannels = false,
+  showEditorTab = true,
+  showEvaluateTab = true,
+  showReviewTab = true,
+  showTracesTab = true,
   reviewBadge,
   rightSlot,
 }: AgentPageTabsProps) {
@@ -122,35 +130,43 @@ export function AgentPageTabs({
       <Tabs value={activeTab} defaultTab={activeTab} onValueChange={handleTabChange} className="flex-1 min-w-0">
         <TabList variant="pill-ghost">
           <AgentTab value="chat" icon={<MessageSquare />} label="Chat" />
-          <AgentTab
-            value="versions"
-            icon={<GitBranch />}
-            label="Editor"
-            disabled={!showPlayground}
-            disabledReason={playgroundDisabledReason}
-          />
-          <AgentTab
-            value="evaluate"
-            icon={<FlaskConical />}
-            label="Evaluate"
-            disabled={!showObservability}
-            disabledReason={observabilityDisabledReason}
-          />
-          <AgentTab
-            value="review"
-            icon={<ClipboardCheck />}
-            label="Review"
-            badge={reviewBadge}
-            disabled={!showObservability}
-            disabledReason={observabilityDisabledReason}
-          />
-          <AgentTab
-            value="traces"
-            icon={<EyeIcon />}
-            label="Traces"
-            disabled={!showObservability}
-            disabledReason={observabilityDisabledReason}
-          />
+          {showEditorTab && (
+            <AgentTab
+              value="versions"
+              icon={<GitBranch />}
+              label="Editor"
+              disabled={!showPlayground}
+              disabledReason={playgroundDisabledReason}
+            />
+          )}
+          {showEvaluateTab && (
+            <AgentTab
+              value="evaluate"
+              icon={<FlaskConical />}
+              label="Evaluate"
+              disabled={!showObservability}
+              disabledReason={observabilityDisabledReason}
+            />
+          )}
+          {showReviewTab && (
+            <AgentTab
+              value="review"
+              icon={<ClipboardCheck />}
+              label="Review"
+              badge={reviewBadge}
+              disabled={!showObservability}
+              disabledReason={observabilityDisabledReason}
+            />
+          )}
+          {showTracesTab && (
+            <AgentTab
+              value="traces"
+              icon={<EyeIcon />}
+              label="Traces"
+              disabled={!showObservability}
+              disabledReason={observabilityDisabledReason}
+            />
+          )}
           {showChannels && <AgentTab value="channels" icon={<Radio />} label="Channels" />}
         </TabList>
       </Tabs>

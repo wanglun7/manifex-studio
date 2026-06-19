@@ -1,8 +1,7 @@
 import { LogoWithoutText } from '@mastra/playground-ui';
-import { Lock } from 'lucide-react';
+import { Navigate, useLocation } from 'react-router';
 import { useAuthCapabilities } from '../hooks/use-auth-capabilities';
 import { isAuthenticated } from '../types';
-import { LoginButton } from './login-button';
 
 export type AuthRequiredProps = {
   children: React.ReactNode;
@@ -13,10 +12,11 @@ export type AuthRequiredProps = {
 };
 
 /**
- * Wrapper component that shows a login prompt when authentication is required.
+ * Wrapper component that redirects to login when authentication is required.
  *
- * If auth is enabled and the user is not authenticated, displays a message
- * prompting them to sign in. Otherwise, renders children normally.
+ * If auth is enabled and the user is not authenticated, redirects to the login
+ * page with the current route as the post-login destination. Otherwise, renders
+ * children normally.
  *
  * @example
  * ```tsx
@@ -31,8 +31,9 @@ export type AuthRequiredProps = {
  * }
  * ```
  */
-export function AuthRequired({ children, loginUrl = '/login', signupUrl = '/signup' }: AuthRequiredProps) {
+export function AuthRequired({ children, loginUrl = '/login' }: AuthRequiredProps) {
   const { data: capabilities, isLoading } = useAuthCapabilities();
+  const location = useLocation();
 
   // While loading, show nothing (or could show a skeleton)
   if (isLoading) {
@@ -48,9 +49,6 @@ export function AuthRequired({ children, loginUrl = '/login', signupUrl = '/sign
   if (isAuthenticated(capabilities)) {
     return <>{children}</>;
   }
-
-  // User is not authenticated - show login prompt
-  const redirectUri = typeof window !== 'undefined' ? window.location.href : undefined;
 
   // No login capability available - show auth required message without login option
   if (!capabilities.login) {
@@ -69,40 +67,10 @@ export function AuthRequired({ children, loginUrl = '/login', signupUrl = '/sign
     );
   }
 
-  // Login capability available - show sign in prompt
-  const handleSignUp = () => {
-    const url = new URL(signupUrl, window.location.origin);
-    if (redirectUri) {
-      url.searchParams.set('redirect', redirectUri);
-    }
-    window.location.href = url.toString();
-  };
+  const redirectPath = new URL(`${location.pathname}${location.search}${location.hash}`, window.location.origin).href;
+  const url = new URL(loginUrl, window.location.origin);
+  url.searchParams.set('redirect', redirectPath);
+  const loginTarget = url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.href;
 
-  return (
-    <div className="flex h-full w-full items-center justify-center">
-      <div className="flex flex-col items-center space-y-6 text-center">
-        <LogoWithoutText className="h-16 w-16 opacity-50" />
-        <div className="space-y-2">
-          <h2 className="text-xl font-semibold text-neutral6">Sign in to continue</h2>
-          <p className="max-w-sm text-neutral3">You need to sign in to access this page.</p>
-        </div>
-        {capabilities.login.description && (
-          <div className="flex items-start gap-2.5 rounded-md border border-border1 bg-surface2 p-3 text-left">
-            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-neutral4" />
-            <p className="max-w-sm text-sm text-neutral3">{capabilities.login.description}</p>
-          </div>
-        )}
-        <LoginButton config={capabilities.login} redirectUri={redirectUri} loginUrl={loginUrl} />
-        {(capabilities.login.type === 'credentials' || capabilities.login.type === 'both') &&
-          capabilities.login.signUpEnabled !== false && (
-            <div className="text-sm">
-              <span className="text-neutral3">{"Don't have an account? "}</span>
-              <button type="button" onClick={handleSignUp} className="text-neutral6 hover:underline">
-                Sign up
-              </button>
-            </div>
-          )}
-      </div>
-    </div>
-  );
+  return <Navigate to={loginTarget} replace />;
 }

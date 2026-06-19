@@ -6,7 +6,7 @@ import { getFirstAccessibleRoute } from '@/domains/auth/route-permissions';
  * Decides where to land when the user hits `/`.
  *
  * Users are redirected to the first accessible route based on their permissions.
- * Falls back to /resources (a public page) if no other routes are accessible.
+ * Falls back to /settings (a public page) if no other routes are accessible.
  *
  * Waits for auth to load before redirecting so we don't flash the
  * wrong route mid-hydration.

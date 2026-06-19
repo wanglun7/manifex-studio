@@ -10,7 +10,6 @@ import { usePermissions } from '@/domains/auth/hooks/use-permissions';
 import { getPermissionForRoute, hasRoutePermission } from '@/domains/auth/route-permissions';
 import { isAuthenticated } from '@/domains/auth/types';
 import { useIsCmsAvailable } from '@/domains/cms/hooks/use-is-cms-available';
-import { MastraVersionFooter } from '@/domains/configuration/components/mastra-version-footer';
 import { useLinkComponent } from '@/lib/framework';
 import { useMastraPlatform } from '@/lib/mastra-platform/hooks/use-mastra-platform';
 import { bottomNav, mainNav } from '@/lib/nav/nav-items';
@@ -55,6 +54,10 @@ export function AppSidebar() {
   const filterItem = (item: NavItem) => {
     if (cmsOnlyLinks.has(item.url) && !isCmsAvailable && !isCmsLoading) return false;
     if (isMastraPlatform && !item.isOnMastraPlatform) return false;
+    if (item.url === '/settings') {
+      if (isPermissionsLoading) return false;
+      return hasPermission('*');
+    }
     // While the user's permissions are still loading, hide permission-gated
     // links. Being permissive here would briefly flash links the user may not
     // be allowed to see. We can't yet know rbacEnabled/isAuthenticated during
@@ -179,12 +182,6 @@ export function AppSidebar() {
               />
             ))}
           </MainSidebar.NavList>
-        )}
-        {state !== 'collapsed' && (
-          <>
-            <div role="separator" aria-orientation="horizontal" className="mx-6 my-2 h-px bg-border1" />
-            <MastraVersionFooter collapsed={false} />
-          </>
         )}
       </MainSidebar.Bottom>
     </MainSidebar>

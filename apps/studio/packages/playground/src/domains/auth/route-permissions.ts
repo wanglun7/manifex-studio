@@ -56,6 +56,7 @@ export const ROUTE_PERMISSIONS: RoutePermission[] = [
   { route: '/logs', permission: 'logs:read', name: 'Logs' },
 
   // Evaluation - uses 'scores' resource (not 'scorers')
+  { route: '/evaluation', permission: ['scores:read', 'datasets:read'], name: 'Evaluation' },
   { route: '/scorers', permission: 'scores:read', name: 'Scorers' },
   { route: '/datasets', permission: ['datasets:read'], name: 'Datasets' },
   { route: '/experiments', permission: ['datasets:read'], name: 'Experiments' },
@@ -70,10 +71,9 @@ export const ROUTE_PERMISSIONS: RoutePermission[] = [
   // Admin-only pages
   { route: '/request-context', permission: '*', name: 'Request Context' },
 
-  // UI-only pages (no corresponding API resource) - marked as public
-  // These pages don't fetch protected data, so they're accessible to all authenticated users
+  // UI-only pages.
   { route: '/settings', permission: 'public', name: 'Settings' },
-  { route: '/resources', permission: 'public', name: 'Resources' },
+  { route: '/resources', permission: '*', name: 'Resources' },
 ];
 
 /**
@@ -133,7 +133,7 @@ export function hasRoutePermission(
  * Used for redirecting users who land on a page they can't access.
  *
  * Skips public routes so we prefer gated routes the user has access to.
- * Falls back to /resources (a public route) if no gated routes are accessible.
+ * Falls back to /settings (a public route) if no gated routes are accessible.
  */
 export function getFirstAccessibleRoute(
   hasPermission: (p: string) => boolean,
@@ -153,6 +153,6 @@ export function getFirstAccessibleRoute(
       return route;
     }
   }
-  // Fall back to /resources if no gated routes are accessible
-  return '/resources';
+  // Fall back to /settings if no gated routes are accessible.
+  return '/settings';
 }

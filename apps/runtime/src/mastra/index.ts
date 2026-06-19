@@ -5,9 +5,12 @@ import {
   MASTRA_RESOURCE_ID_KEY,
   MASTRA_THREAD_ID_KEY,
 } from '@mastra/core/request-context'
+import { MastraCompositeStore } from '@mastra/core/storage'
+import { DuckDBStore } from '@mastra/duckdb'
 import { MastraEditor } from '@mastra/editor'
 import { LibSQLStore } from '@mastra/libsql'
 import { Observability, MastraStorageExporter } from '@mastra/observability'
+import { manifexAuth, manifexRbac } from './auth.js'
 import {
   fullAccessAgent,
   fullAccessWorkspace,
@@ -94,10 +97,18 @@ export const mastra = new Mastra({
   mcpServers: {
     ...searchMcpClient.toMCPServerProxies(),
   },
-  workspace: fullAccessWorkspace,
-  storage: new LibSQLStore({
-    id: 'mastra-studio-storage',
-    url: `file:${resolve(artifactsRoot, 'mastra-studio/mastra.db')}`,
+  storage: new MastraCompositeStore({
+    id: 'manifex-storage',
+    default: new LibSQLStore({
+      id: 'mastra-studio-storage',
+      url: `file:${resolve(artifactsRoot, 'mastra-studio/mastra.db')}`,
+    }),
+    domains: {
+      observability: await new DuckDBStore({
+        id: 'manifex-observability-storage',
+        path: resolve(mastraStudioArtifactsRoot, 'observability.duckdb'),
+      }).getStore('observability'),
+    },
   }),
   editor: new MastraEditor({
     source: 'db',
@@ -118,6 +129,8 @@ export const mastra = new Mastra({
   server: {
     port: Number(process.env.MASTRA_PORT || 4111),
     host: '127.0.0.1',
+    auth: manifexAuth,
+    rbac: manifexRbac,
     apiRoutes: manifexArtifactRoutes,
     middleware: [
       {

@@ -1,6 +1,7 @@
 import { coreFeatures } from '@mastra/core/features';
 import { MainContentLayout } from '@mastra/playground-ui';
-import { useParams, useLocation } from 'react-router';
+import { useEffect } from 'react';
+import { useParams, useLocation, useNavigate } from 'react-router';
 import { AgentPageTabs } from '@/domains/agents/components/agent-page-tabs';
 import type { AgentPageTab } from '@/domains/agents/components/agent-page-tabs';
 import { AgentTopBarControls } from '@/domains/agents/components/agent-top-bar-controls';
@@ -8,6 +9,7 @@ import { PlaygroundModelProvider } from '@/domains/agents/context/playground-mod
 import { ReviewQueueProvider } from '@/domains/agents/context/review-queue-context';
 import { useAgent } from '@/domains/agents/hooks/use-agent';
 import { useChannelPlatforms } from '@/domains/agents/hooks/use-channels';
+import { usePermissions } from '@/domains/auth/hooks/use-permissions';
 import { useIsCmsAvailable } from '@/domains/cms/hooks/use-is-cms-available';
 import { useHasObservability } from '@/domains/configuration/hooks/use-has-observability';
 import { GenerationProvider } from '@/domains/datasets/context/generation-context';
@@ -17,14 +19,20 @@ import { SchemaRequestContextProvider } from '@/domains/request-context/context/
 export const AgentLayout = ({ children }: { children: React.ReactNode }) => {
   const { agentId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { isCmsAvailable } = useIsCmsAvailable();
   const { hasObservability } = useHasObservability();
   const { data: channelPlatforms } = useChannelPlatforms();
+  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } = usePermissions();
   const hasChannels = Boolean(channelPlatforms?.length);
 
   const isExperimentalFeatures = coreFeatures.has('datasets');
   const showPlayground = isCmsAvailable && isExperimentalFeatures;
   const showObservability = hasObservability && isExperimentalFeatures;
+  const showEditorTab = showPlayground && hasAnyPermission(['agents:write', 'stored-agents:write']);
+  const showEvaluateTab = showObservability && hasAnyPermission(['scores:read', 'datasets:read']);
+  const showReviewTab = showObservability && hasAnyPermission(['scores:read', 'datasets:read']);
+  const showTracesTab = showObservability && hasPermission('observability:read');
 
   const { data: agent } = useAgent(agentId!);
 
@@ -44,9 +52,27 @@ export const AgentLayout = ({ children }: { children: React.ReactNode }) => {
             ? 'channels'
             : 'chat';
 
+  const activeTabAllowed =
+    activeTab === 'chat' ||
+    (activeTab === 'versions' && showEditorTab) ||
+    (activeTab === 'evaluate' && showEvaluateTab) ||
+    (activeTab === 'review' && showReviewTab) ||
+    (activeTab === 'traces' && showTracesTab) ||
+    (activeTab === 'channels' && hasChannels);
+
+  useEffect(() => {
+    if (!agentId || isPermissionsLoading || activeTabAllowed) return;
+    void navigate(`/agents/${agentId}/chat/new`, { replace: true });
+  }, [activeTabAllowed, agentId, isPermissionsLoading, navigate]);
+
   const showTopBarControls =
-    (activeTab === 'versions' || activeTab === 'evaluate' || activeTab === 'review') &&
-    (showPlayground || showObservability);
+    (activeTab === 'versions' && showEditorTab) ||
+    (activeTab === 'evaluate' && showEvaluateTab) ||
+    (activeTab === 'review' && showReviewTab);
+
+  if (!isPermissionsLoading && !activeTabAllowed) {
+    return null;
+  }
 
   const content = (
     <MainContentLayout>
@@ -56,6 +82,10 @@ export const AgentLayout = ({ children }: { children: React.ReactNode }) => {
         showPlayground={showPlayground}
         showObservability={showObservability}
         showChannels={hasChannels}
+        showEditorTab={showEditorTab}
+        showEvaluateTab={showEvaluateTab}
+        showReviewTab={showReviewTab}
+        showTracesTab={showTracesTab}
         rightSlot={showTopBarControls ? <AgentTopBarControls requestContextSchema={requestContextSchema} /> : undefined}
       />
       {children}

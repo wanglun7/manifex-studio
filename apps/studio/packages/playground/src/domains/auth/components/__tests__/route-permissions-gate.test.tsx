@@ -26,6 +26,16 @@ const BASE_URL = 'http://localhost:4111';
 
 vi.mock('@mastra/playground-ui', () => ({
   Spinner: () => <div data-testid="gate-spinner" />,
+  ErrorState: ({ title, message, action }: { title: string; message: string; action?: ReactNode }) => (
+    <div>
+      <h1>{title}</h1>
+      <p>{message}</p>
+      {action}
+    </div>
+  ),
+  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button {...props}>{children}</button>
+  ),
 }));
 
 import { RoutePermissionsGate } from '../route-permissions-gate';
@@ -99,14 +109,14 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-function renderGate() {
+function renderGate(baseUrl = BASE_URL) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   return render(
-    <MastraReactProvider baseUrl={BASE_URL}>
+    <MastraReactProvider baseUrl={baseUrl}>
       <QueryClientProvider client={queryClient}>
         <ErrorBoundary>
-          <RoutePermissionsGate>
+          <RoutePermissionsGate baseUrl={baseUrl}>
             <div data-testid="app-content">app</div>
           </RoutePermissionsGate>
         </ErrorBoundary>
@@ -175,5 +185,19 @@ describe('RoutePermissionsGate', () => {
     const boundary = await screen.findByTestId('boundary');
     expect(boundary.textContent).toContain('Invalid permission pattern');
     expect(screen.queryByTestId('app-content')).toBeNull();
+  });
+
+  it('does not expose Mastra connection details when the runtime cannot be reached', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/auth/capabilities`, () => HttpResponse.error()),
+      http.get(`${BASE_URL}/api/auth/permission-patterns`, () => HttpResponse.error()),
+    );
+
+    renderGate();
+
+    expect(await screen.findByText(/service unavailable/i)).toBeTruthy();
+    expect(screen.queryByText(/mastra server/i)).toBeNull();
+    expect(screen.queryByText(/settings/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /reset studio configuration/i })).toBeNull();
   });
 });

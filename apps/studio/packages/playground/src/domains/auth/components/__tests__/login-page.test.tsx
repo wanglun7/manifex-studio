@@ -196,4 +196,5 @@ describe('LoginPage UI parity for /login and /signup', () => {
       expect(screen.getByText('oops')).toBeTruthy();
     });
   });
+
 });

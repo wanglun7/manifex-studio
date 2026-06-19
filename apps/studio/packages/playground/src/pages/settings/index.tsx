@@ -12,6 +12,7 @@ import type { Theme } from '@mastra/playground-ui';
 import { SettingsRow } from '@mastra/playground-ui/components/SettingsRow';
 import { StudioConfigForm } from '@/domains/configuration/components/studio-config-form';
 import { useStudioConfig } from '@/domains/configuration/context/studio-config-state';
+import { usePermissions } from '@/domains/auth/hooks/use-permissions';
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'dark', label: 'Dark' },
@@ -24,6 +25,8 @@ const isTheme = (value: string): value is Theme => THEME_OPTIONS.some(option => 
 export const StudioSettingsPage = () => {
   const { baseUrl, headers, apiPrefix } = useStudioConfig();
   const { theme, setTheme } = useTheme();
+  const { hasPermission } = usePermissions();
+  const canManageStudioConnection = hasPermission('*');
 
   return (
     <PageLayout width="narrow">
@@ -50,12 +53,14 @@ export const StudioSettingsPage = () => {
           </SettingsRow>
         </SectionCard>
 
-        <SectionCard
-          title="Mastra Connection"
-          description="Configure the Mastra instance URL, API prefix, and request headers used by the studio."
-        >
-          <StudioConfigForm initialConfig={{ baseUrl, headers, apiPrefix }} />
-        </SectionCard>
+        {canManageStudioConnection && (
+          <SectionCard
+            title="Mastra Connection"
+            description="Configure the Mastra instance URL, API prefix, and request headers used by the studio."
+          >
+            <StudioConfigForm initialConfig={{ baseUrl, headers, apiPrefix }} />
+          </SectionCard>
+        )}
       </PageLayout.MainArea>
     </PageLayout>
   );

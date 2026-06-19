@@ -155,14 +155,14 @@ describe('RoutePermissionGuard', () => {
 
   it('does not redirect (no loop) when the fallback route is the page already shown', async () => {
     // A user with no accessible gated routes: getFirstAccessibleRoute falls
-    // back to /resources (a public page). When already on /resources, the guard
+    // back to /settings (a public page). When already on /settings, the guard
     // renders children instead of navigating to itself (which would loop).
     server.use(authHandler(noAccessCapabilities));
 
-    renderGuard('/resources');
+    renderGuard('/settings');
 
     expect(await screen.findByTestId('protected-content')).toBeTruthy();
     expect(navigateSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId('pathname').textContent).toBe('/resources');
+    expect(screen.getByTestId('pathname').textContent).toBe('/settings');
   });
 });

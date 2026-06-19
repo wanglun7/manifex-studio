@@ -2,7 +2,6 @@ import { ErrorState, Spinner, Button } from '@mastra/playground-ui';
 
 import { usePermissionPatterns } from '../hooks/use-permission-patterns';
 import { ALL_SIDEBAR_PERMISSIONS } from '../route-permissions';
-import { MASTRA_STUDIO_CONFIG_LOCAL_STORAGE_KEY } from '@/domains/configuration/context/studio-config-context';
 
 /**
  * Async replacement for the old static `P()` validator.
@@ -73,22 +72,18 @@ interface GateInvalidBaseUrlProps {
 }
 
 const GateInvalidBaseUrl = ({ error, baseUrl }: GateInvalidBaseUrlProps) => {
-  const messages = [
-    `Studio could not reach the Mastra server at ${baseUrl}. Check that the instance URL and API prefix in Settings are correct, and that the server is running.`,
-    `Error: ${error.message}`,
-  ];
+  console.error('Failed to load studio', { baseUrl, error });
 
   const handleReset = () => {
-    localStorage.removeItem(MASTRA_STUDIO_CONFIG_LOCAL_STORAGE_KEY);
     window.location.reload();
   };
 
   return (
     <div className="flex h-screen w-full items-center justify-center">
       <ErrorState
-        title="Failed to load studio"
-        message={messages.join('\n\n')}
-        action={<Button onClick={handleReset}>Reset Studio Configuration</Button>}
+        title="Service unavailable"
+        message="The workspace is not available right now. Please try again in a moment."
+        action={<Button onClick={handleReset}>Retry</Button>}
       />
     </div>
   );
