@@ -150,4 +150,46 @@ describe('useAuthCapabilities', () => {
       expect(url).toBe('http://localhost:4000/api/auth/capabilities');
     });
   });
+
+  describe('Manifex access fallback', () => {
+    it('should merge Manifex access when Mastra capabilities has an authenticated user but no access payload', async () => {
+      const mockClient = {
+        options: {
+          baseUrl: 'http://localhost:4111',
+          headers: {
+            'x-mastra-client-type': 'studio',
+          },
+        },
+      };
+
+      mockFetch
+        .mockResolvedValueOnce(
+          createMockResponse({
+            enabled: true,
+            login: { type: 'credentials' },
+            user: { id: 'user-1', email: 'member@manifex.local' },
+            capabilities: { user: true, session: true, sso: false, rbac: false, acl: false },
+            access: null,
+          }),
+        )
+        .mockResolvedValueOnce(
+          createMockResponse({
+            roles: ['member'],
+            permissions: ['agents:read', 'agents:execute'],
+            agentIds: ['feishu-agent'],
+          }),
+        );
+
+      const { makeAuthCapabilitiesRequest } = await import('../use-auth-capabilities');
+      const capabilities = await makeAuthCapabilitiesRequest(mockClient as any);
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[1]?.[0]).toBe('http://localhost:4111/manifex/auth/access');
+      expect('access' in capabilities ? capabilities.access : null).toEqual({
+        roles: ['member'],
+        permissions: ['agents:read', 'agents:execute'],
+        agentIds: ['feishu-agent'],
+      });
+    });
+  });
 });

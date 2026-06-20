@@ -19,6 +19,8 @@ import React from 'react';
 
 import { useNavigationCommand } from './use-navigation-command';
 import { useAgents } from '@/domains/agents/hooks/use-agents';
+import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities';
+import { isAuthenticated } from '@/domains/auth/types';
 import { useMCPServers } from '@/domains/mcps/hooks/use-mcp-servers';
 import { useProcessors } from '@/domains/processors/hooks/use-processors';
 import { useScorers } from '@/domains/scores/hooks/use-scorers';
@@ -28,6 +30,19 @@ import { useLinkComponent } from '@/lib/framework';
 import { useMastraPlatform } from '@/lib/mastra-platform';
 
 export const NavigationCommand = () => {
+  const { data: authCapabilities } = useAuthCapabilities();
+  if (!authCapabilities) return null;
+  if (authCapabilities.enabled && !isAuthenticated(authCapabilities)) return null;
+
+  const roles = authCapabilities && isAuthenticated(authCapabilities) ? (authCapabilities.access?.roles ?? []) : [];
+  const isMemberOnly = roles.includes('member') && !roles.includes('owner') && !roles.includes('operator');
+
+  if (isMemberOnly) return null;
+
+  return <NavigationCommandContent />;
+};
+
+const NavigationCommandContent = () => {
   const { open, setOpen } = useNavigationCommand();
   const { navigate, paths } = useLinkComponent();
   const { isMastraPlatform } = useMastraPlatform();

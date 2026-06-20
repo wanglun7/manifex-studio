@@ -25,8 +25,9 @@ const isTheme = (value: string): value is Theme => THEME_OPTIONS.some(option => 
 export const StudioSettingsPage = () => {
   const { baseUrl, headers, apiPrefix } = useStudioConfig();
   const { theme, setTheme } = useTheme();
-  const { hasPermission } = usePermissions();
-  const canManageStudioConnection = hasPermission('*');
+  const { hasPermission, roles, isLoading } = usePermissions();
+  const isMemberOnly = roles.includes('member') && !roles.includes('owner') && !roles.includes('operator');
+  const canManageStudioConnection = !isLoading && !isMemberOnly && hasPermission('*');
 
   return (
     <PageLayout width="narrow">

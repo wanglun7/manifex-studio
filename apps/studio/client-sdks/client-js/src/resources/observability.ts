@@ -114,6 +114,9 @@ export interface LegacyGetTracesResponse {
 }
 
 export type ListScoresBySpanParams = SpanIds & PaginationArgs;
+export type ObservabilityScopeParams = {
+  resourceId?: string;
+};
 
 // ============================================================================
 // Observability Resource
@@ -146,8 +149,9 @@ export class Observability extends BaseResource {
    * @param traceId - ID of the trace to retrieve
    * @returns Promise containing the trace with lightweight spans
    */
-  getTraceLight(traceId: string): Promise<GetTraceLightResponse> {
-    return this.request(`/observability/traces/${traceId}/light`);
+  getTraceLight(traceId: string, params: ObservabilityScopeParams = {}): Promise<GetTraceLightResponse> {
+    const queryString = toQueryParams(params);
+    return this.request(`/observability/traces/${traceId}/light${queryString ? `?${queryString}` : ''}`);
   }
 
   /**
@@ -157,8 +161,9 @@ export class Observability extends BaseResource {
    * @param spanId - ID of the span to retrieve
    * @returns Promise containing the full span record
    */
-  getSpan(traceId: string, spanId: string): Promise<GetSpanResponse> {
-    return this.request(`/observability/traces/${traceId}/spans/${spanId}`);
+  getSpan(traceId: string, spanId: string, params: ObservabilityScopeParams = {}): Promise<GetSpanResponse> {
+    const queryString = toQueryParams(params);
+    return this.request(`/observability/traces/${traceId}/spans/${spanId}${queryString ? `?${queryString}` : ''}`);
   }
 
   /**
@@ -251,11 +256,11 @@ export class Observability extends BaseResource {
    *   anchor span; depth: 1 → anchor plus immediate children; etc).
    * @returns Promise containing the branch (anchor span plus descendants)
    */
-  getBranch(params: GetBranchArgs): Promise<GetBranchResponse> {
-    const { traceId, spanId, depth } = params;
-    const queryString = depth !== undefined ? `?depth=${depth}` : '';
+  getBranch(params: GetBranchArgs & ObservabilityScopeParams): Promise<GetBranchResponse> {
+    const { traceId, spanId, depth, resourceId } = params;
+    const queryString = toQueryParams({ depth, resourceId });
     return this.request(
-      `/observability/traces/${encodeURIComponent(traceId)}/branches/${encodeURIComponent(spanId)}${queryString}`,
+      `/observability/traces/${encodeURIComponent(traceId)}/branches/${encodeURIComponent(spanId)}${queryString ? `?${queryString}` : ''}`,
     );
   }
 

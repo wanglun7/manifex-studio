@@ -54,10 +54,6 @@ export function AppSidebar() {
   const filterItem = (item: NavItem) => {
     if (cmsOnlyLinks.has(item.url) && !isCmsAvailable && !isCmsLoading) return false;
     if (isMastraPlatform && !item.isOnMastraPlatform) return false;
-    if (item.url === '/settings') {
-      if (isPermissionsLoading) return false;
-      return hasPermission('*');
-    }
     // While the user's permissions are still loading, hide permission-gated
     // links. Being permissive here would briefly flash links the user may not
     // be allowed to see. We can't yet know rbacEnabled/isAuthenticated during

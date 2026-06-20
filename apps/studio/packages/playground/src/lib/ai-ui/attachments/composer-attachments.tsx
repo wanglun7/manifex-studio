@@ -22,7 +22,7 @@ interface ComposerAttachmentsContextValue {
   addUrl: (url: string) => Promise<void>;
   remove: (id: string) => void;
   clear: () => void;
-  toCoreUserMessages: (options?: { threadId?: string }) => Promise<CoreUserMessage[]>;
+  toCoreUserMessages: (options?: { agentId?: string; threadId?: string }) => Promise<CoreUserMessage[]>;
 }
 
 const ComposerAttachmentsContext = createContext<ComposerAttachmentsContextValue | null>(null);
@@ -65,11 +65,15 @@ const formatBytes = (value: number) => {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 };
 
-const uploadLocalAttachments = async (threadId: string, attachments: ComposerAttachment[]) => {
+const uploadLocalAttachments = async (threadId: string, attachments: ComposerAttachment[], agentId?: string) => {
   const formData = new FormData();
   attachments.forEach(att => formData.append('files', att.file, att.name));
 
-  const response = await fetch(`/manifex/threads/${encodeURIComponent(threadId)}/attachments`, {
+  const params = new URLSearchParams();
+  if (agentId) params.set('agentId', agentId);
+  const query = params.size ? `?${params.toString()}` : '';
+
+  const response = await fetch(`/manifex/threads/${encodeURIComponent(threadId)}/attachments${query}`, {
     method: 'POST',
     body: formData,
   });
@@ -85,7 +89,7 @@ const uploadLocalAttachments = async (threadId: string, attachments: ComposerAtt
 
 const attachmentsToCoreUserMessage = async (
   attachments: ComposerAttachment[],
-  options?: { threadId?: string },
+  options?: { agentId?: string; threadId?: string },
 ): Promise<CoreUserMessage> => {
   const localAttachments = attachments.filter(att => !att.isUrl);
   const urlAttachments = attachments.filter(att => att.isUrl);
@@ -94,7 +98,10 @@ const attachmentsToCoreUserMessage = async (
     throw new Error('A thread id is required before uploading local attachments.');
   }
 
-  const uploaded = localAttachments.length > 0 ? await uploadLocalAttachments(options!.threadId!, localAttachments) : [];
+  const uploaded =
+    localAttachments.length > 0
+      ? await uploadLocalAttachments(options!.threadId!, localAttachments, options?.agentId)
+      : [];
   const lines = [
     '<manifex_attachments>',
     'The user attached files for this turn. They are available inside the current thread workspace.',

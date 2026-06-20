@@ -212,7 +212,11 @@ export const GET_AUTH_CAPABILITIES_ROUTE = createPublicRoute({
       if (!buildCapabilities) {
         return { enabled: false, login: null };
       }
-      const capabilities = await buildCapabilities(auth, request, { rbac, fga, apiPrefix: routePrefix });
+      const capabilities = await enrichAuthAccess(
+        auth,
+        request,
+        await buildCapabilities(auth, request, { rbac, fga, apiPrefix: routePrefix }),
+      );
 
       // If capabilities came back without a user, the session may have expired.
       // Attempt a transparent refresh (same logic as coreAuthMiddleware) and retry.
@@ -231,10 +235,14 @@ export const GET_AUTH_CAPABILITIES_ROUTE = createPublicRoute({
                   headers: new Headers(request.headers),
                 });
                 refreshedRequest.headers.set('Cookie', cookieValue);
-                const refreshedCapabilities = await buildCapabilities(auth, refreshedRequest, {
-                  rbac,
-                  apiPrefix: routePrefix,
-                });
+                const refreshedCapabilities = await enrichAuthAccess(
+                  auth,
+                  refreshedRequest,
+                  await buildCapabilities(auth, refreshedRequest, {
+                    rbac,
+                    apiPrefix: routePrefix,
+                  }),
+                );
 
                 // Attach refresh headers so the adapter can set the new cookie
                 if ('user' in refreshedCapabilities) {
@@ -265,6 +273,22 @@ function extractCookieFromHeaders(headers: Record<string, string>): string | nul
   // Set-Cookie value is "name=value; Path=/; ..." — extract "name=value"
   const match = setCookie.match(/^([^;]+)/);
   return match ? (match[1] ?? null) : null;
+}
+
+async function enrichAuthAccess(auth: any, request: Request, capabilities: any) {
+  if (!capabilities || !('user' in capabilities) || typeof auth?.getAccess !== 'function') return capabilities;
+
+  const user =
+    typeof auth.getCurrentUser === 'function'
+      ? await auth.getCurrentUser(request)
+      : capabilities.user;
+
+  if (!user) return capabilities;
+
+  return {
+    ...capabilities,
+    access: await auth.getAccess(user),
+  };
 }
 
 // ============================================================================
@@ -303,6 +327,14 @@ export const GET_CURRENT_USER_ROUTE = createPublicRoute({
           permissions = await rbac.getPermissions(user);
         } catch {
           // RBAC not available or failed
+        }
+      } else if (typeof (auth as any).getAccess === 'function') {
+        try {
+          const access = await (auth as any).getAccess(user);
+          roles = access?.roles;
+          permissions = access?.permissions;
+        } catch {
+          // Access not available or failed
         }
       }
 

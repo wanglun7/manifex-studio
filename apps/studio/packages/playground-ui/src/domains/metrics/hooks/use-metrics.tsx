@@ -100,6 +100,7 @@ export function MetricsProvider({
   onCustomRangeChange,
   tracesBasePath,
   logsBasePath,
+  baseDimensionalFilter,
 }: {
   children: ReactNode;
   preset: DatePreset;
@@ -112,6 +113,8 @@ export function MetricsProvider({
   tracesBasePath?: string;
   /** Base path for drilldown links to the Logs page. Defaults to `/logs` when omitted. */
   logsBasePath?: string;
+  /** Hidden dimensional filter applied to every metrics request, e.g. the current user's resource scope. */
+  baseDimensionalFilter?: MetricsDimensionalFilter;
 }) {
   // Stable key for memo dependencies — the parent may re-create the tokens
   // array on every render (e.g. from `useMemo(... , [searchParams])`), but the
@@ -123,7 +126,17 @@ export function MetricsProvider({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableFilterTokens = useMemo(() => filterTokens, [filterTokensKey]);
 
-  const dimensionalFilter = useMemo(() => buildMetricsDimensionalFilter(stableFilterTokens), [stableFilterTokens]);
+  const baseDimensionalFilterKey = useMemo(
+    () => JSON.stringify(baseDimensionalFilter ?? {}),
+    [baseDimensionalFilter],
+  );
+
+  const dimensionalFilter = useMemo(
+    () => ({ ...(baseDimensionalFilter ?? {}), ...buildMetricsDimensionalFilter(stableFilterTokens) }),
+    // baseDimensionalFilterKey is a stable digest for the object content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stableFilterTokens, baseDimensionalFilterKey],
+  );
 
   const dimensionalFilterKey = useMemo(() => JSON.stringify(dimensionalFilter), [dimensionalFilter]);
 

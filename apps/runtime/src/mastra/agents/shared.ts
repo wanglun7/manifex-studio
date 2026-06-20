@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   cpSync,
   existsSync,
@@ -58,6 +59,7 @@ const sandboxIdleStopMs = Number(optionalEnv('WORKSPACE_SANDBOX_IDLE_STOP_MS') |
 const sandboxIdleRemoveMs = Number(optionalEnv('WORKSPACE_SANDBOX_IDLE_REMOVE_MS') || 24 * 60 * 60_000)
 const sandboxSweepIntervalMs = Number(optionalEnv('WORKSPACE_SANDBOX_SWEEP_INTERVAL_MS') || 5 * 60_000)
 const semanticRecallEnabled = Boolean(dashScopeApiKey)
+export const MANIFEX_SANDBOX_KEY = 'manifex.sandboxKey'
 
 export const maxSteps = Number(optionalEnv('AGENT_MAX_STEPS') || 50)
 export const useDockerSandbox = workspaceSandboxProvider === 'docker'
@@ -150,12 +152,16 @@ function getContextValue(requestContext: RequestContext, names: string[]) {
 }
 
 export function sanitizeSandboxId(value: string) {
-  return value.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80) || 'default'
+  const normalized = value.replace(/[^a-zA-Z0-9_.-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+  const readablePrefix = normalized.slice(0, 40) || 'default'
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 24)
+  return `${readablePrefix}-${digest}`
 }
 
 function resolveThreadKey(requestContext: RequestContext) {
   return sanitizeSandboxId(
     getContextValue(requestContext, [
+      MANIFEX_SANDBOX_KEY,
       MASTRA_THREAD_ID_KEY,
       'thread-id',
       'threadId',

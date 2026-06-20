@@ -35,6 +35,8 @@ import { CircleSlash2, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { TraceAsItemDialog } from '@/domains/observability/components/trace-as-item-dialog';
+import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities';
+import { isAuthenticated } from '@/domains/auth/types';
 import { useScorers } from '@/domains/scores';
 import { useTraceSpanScores } from '@/domains/scores/hooks/use-trace-span-scores';
 import { ScoreDataPanel } from '@/domains/traces/components/score-data-panel';
@@ -53,6 +55,17 @@ export default function TracesPage({ scopedEntityId, scopedEntityType }: TracesP
   const isScoped = !!scopedEntityId;
   const [searchParams, setSearchParams] = useSearchParams();
   const url = useTraceUrlState(searchParams, setSearchParams);
+  const { data: authCapabilities } = useAuthCapabilities();
+  const authAccessReady = !!authCapabilities && isAuthenticated(authCapabilities) && !!authCapabilities.access;
+  const authAccess = authAccessReady ? authCapabilities.access : null;
+  const isOwnerOperator = !!authAccess && (authAccess.roles.includes('owner') || authAccess.roles.includes('operator'));
+
+  const scopedResourceId = useMemo(() => {
+    if (!authCapabilities || !isAuthenticated(authCapabilities)) return undefined;
+    const roles = authCapabilities.access?.roles ?? [];
+    if (roles.includes('owner') || roles.includes('operator')) return undefined;
+    return authCapabilities.access?.resourceId ?? authCapabilities.user.resourceId;
+  }, [authCapabilities]);
 
   useEffect(() => {
     if (!scopedEntityId) return;
@@ -124,10 +137,12 @@ export default function TracesPage({ scopedEntityId, scopedEntityType }: TracesP
     // (which changes `spanIdParam`) doesn't re-fetch the subtree from a different root.
     anchorSpanId: url.listMode === 'branches' ? (url.anchorSpanIdParam ?? null) : null,
     listMode: url.listMode,
+    resourceId: scopedResourceId,
   });
   const { data: spanDetailData, isLoading: isLoadingSpanDetail } = useSpanDetail(
     url.traceIdParam ?? '',
     url.spanIdParam ?? '',
+    { resourceId: scopedResourceId },
   );
 
   // Derived from URL + query data — no local state, so a span change (which clears scoreIdParam
@@ -168,17 +183,24 @@ export default function TracesPage({ scopedEntityId, scopedEntityType }: TracesP
     ],
   );
 
-  const traceFilters = useMemo(
-    () =>
-      buildTraceListFilters({
+  const traceFilters = useMemo(() => {
+    const filters = buildTraceListFilters({
         rootEntityType: url.selectedEntityOption?.entityType,
         status: url.selectedStatus,
         dateFrom: url.selectedDateFrom,
         dateTo: url.selectedDateTo,
         tokens: url.filterTokens,
-      }),
-    [url.filterTokens, url.selectedDateFrom, url.selectedDateTo, url.selectedEntityOption, url.selectedStatus],
-  );
+      }) ?? {};
+    if (scopedResourceId) filters.resourceId = scopedResourceId;
+    return filters;
+  }, [
+    scopedResourceId,
+    url.filterTokens,
+    url.selectedDateFrom,
+    url.selectedDateTo,
+    url.selectedEntityOption,
+    url.selectedStatus,
+  ]);
 
   const {
     data: tracesData,
@@ -191,7 +213,11 @@ export default function TracesPage({ scopedEntityId, scopedEntityType }: TracesP
     autoRefetch: autoRefetchTraces,
     setAutoRefetch: setAutoRefetchTraces,
     recentlyAddedKeys: recentlyAddedTraceKeys,
-  } = useTraces({ filters: traceFilters, listMode: url.listMode });
+  } = useTraces({
+    filters: traceFilters,
+    listMode: url.listMode,
+    enabled: authAccessReady && (isOwnerOperator || !!scopedResourceId),
+  });
 
   const traces = useMemo(() => tracesData?.spans ?? [], [tracesData?.spans]);
 
@@ -350,6 +376,14 @@ export default function TracesPage({ scopedEntityId, scopedEntityType }: TracesP
       {branchesUnsupportedNotice}
     </PageLayout.TopArea>
   );
+
+  if (!authAccessReady || (!isOwnerOperator && !scopedResourceId)) {
+    return (
+      <PageLayout width="wide" height="full">
+        {pageTopArea}
+      </PageLayout>
+    );
+  }
 
   // Swallow the "branches not supported" error — the effect above flips listMode back to traces
   // and the next query will succeed. Showing the red error screen for one frame would be jarring.

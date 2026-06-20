@@ -11,6 +11,7 @@ export interface UseTraceOrBranchSpansArgs {
   anchorSpanId?: string | null;
   listMode: TraceListMode;
   depth?: number;
+  resourceId?: string;
 }
 
 export interface UseTraceOrBranchSpansResult {
@@ -32,14 +33,16 @@ export function useTraceOrBranchSpans({
   anchorSpanId,
   listMode,
   depth,
+  resourceId,
 }: UseTraceOrBranchSpansArgs): UseTraceOrBranchSpansResult {
   const isBranches = listMode === 'branches';
 
-  const traceQuery = useTraceLightSpans(isBranches ? null : traceId);
+  const traceQuery = useTraceLightSpans(isBranches ? null : traceId, { resourceId });
   const branchQuery = useBranch({
     traceId: isBranches ? traceId : null,
     spanId: isBranches ? anchorSpanId : null,
     depth,
+    resourceId,
   });
 
   if (isBranches) {

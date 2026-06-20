@@ -23,15 +23,19 @@ export const AgentLayout = ({ children }: { children: React.ReactNode }) => {
   const { isCmsAvailable } = useIsCmsAvailable();
   const { hasObservability } = useHasObservability();
   const { data: channelPlatforms } = useChannelPlatforms();
-  const { hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } = usePermissions();
+  const { roles, rbacEnabled, hasPermission, hasAnyPermission, isLoading: isPermissionsLoading } = usePermissions();
   const hasChannels = Boolean(channelPlatforms?.length);
+  const hasRoleAwareAuth = rbacEnabled || roles.length > 0;
+  const hasDeveloperRole = roles.includes('owner') || roles.includes('operator');
+  const canUseDeveloperTabs =
+    !isPermissionsLoading && (hasRoleAwareAuth ? hasDeveloperRole : true);
 
   const isExperimentalFeatures = coreFeatures.has('datasets');
   const showPlayground = isCmsAvailable && isExperimentalFeatures;
   const showObservability = hasObservability && isExperimentalFeatures;
-  const showEditorTab = showPlayground && hasAnyPermission(['agents:write', 'stored-agents:write']);
-  const showEvaluateTab = showObservability && hasAnyPermission(['scores:read', 'datasets:read']);
-  const showReviewTab = showObservability && hasAnyPermission(['scores:read', 'datasets:read']);
+  const showEditorTab = canUseDeveloperTabs && showPlayground && hasAnyPermission(['agents:write', 'stored-agents:write']);
+  const showEvaluateTab = canUseDeveloperTabs && showObservability && hasAnyPermission(['scores:read', 'datasets:read']);
+  const showReviewTab = canUseDeveloperTabs && showObservability && hasAnyPermission(['scores:read', 'datasets:read']);
   const showTracesTab = showObservability && hasPermission('observability:read');
 
   const { data: agent } = useAgent(agentId!);

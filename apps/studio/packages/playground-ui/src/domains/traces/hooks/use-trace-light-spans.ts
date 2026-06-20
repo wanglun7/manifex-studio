@@ -7,16 +7,18 @@ const IMMUTABLE_CACHE_TIME = 1000 * 60 * 60 * 24 * 30; // 30 days, massive cache
 
 export function useTraceLightSpans(
   traceId: string | null | undefined,
+  options: { resourceId?: string } = {},
 ): UseQueryResult<{ traceId: string; spans: LightSpanRecord[] } | null> {
   const client = useMastraClient();
+  const { resourceId } = options;
 
   return useQuery({
-    queryKey: ['trace-light-spans', traceId],
+    queryKey: ['trace-light-spans', traceId, resourceId],
     queryFn: async () => {
       if (!traceId) {
         throw new Error('Trace ID is required');
       }
-      const res = await client.getTraceLight(traceId);
+      const res = await client.getTraceLight(traceId, { resourceId });
       return res;
     },
     enabled: !!traceId,

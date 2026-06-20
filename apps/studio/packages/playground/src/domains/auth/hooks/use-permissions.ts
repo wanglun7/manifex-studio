@@ -151,9 +151,11 @@ export function usePermissions(): UsePermissionsResult {
   const authenticated = capabilities && isAuthenticated(capabilities);
   const access = authenticated ? capabilities.access : null;
 
-  // Check if RBAC is enabled
-  // If RBAC capability is false or not present, all permission checks should return true
+  // Permission checks are active either when upstream RBAC is enabled or when
+  // Manifex auth returns an access payload. If neither exists, preserve the
+  // open-source Studio behavior and allow all checks.
   const rbacEnabled = authenticated ? capabilities.capabilities.rbac : false;
+  const permissionChecksEnabled = isImpersonating || rbacEnabled || Boolean(access);
 
   // When impersonating, use the overridden role and permissions
   const roles = isImpersonating && impersonatedRole ? [impersonatedRole.id] : (access?.roles ?? []);
@@ -162,8 +164,7 @@ export function usePermissions(): UsePermissionsResult {
 
   // Helper to check permission with RBAC bypass
   const checkPermission = (permission: string): boolean => {
-    // If RBAC is not enabled, allow everything (unless impersonating)
-    if (!rbacEnabled && !isImpersonating) return true;
+    if (!permissionChecksEnabled) return true;
     return checkHasPermission(permissions, permission);
   };
 
@@ -172,24 +173,24 @@ export function usePermissions(): UsePermissionsResult {
     permissions,
     isLoading,
     isAuthenticated: !!authenticated,
-    rbacEnabled,
+    rbacEnabled: permissionChecksEnabled,
 
     hasPermission: (permission: string) => {
       return checkPermission(permission);
     },
 
     hasAllPermissions: (requiredPermissions: string[]) => {
-      if (!rbacEnabled && !isImpersonating) return true;
+      if (!permissionChecksEnabled) return true;
       return requiredPermissions.every(p => checkHasPermission(permissions, p));
     },
 
     hasAnyPermission: (requiredPermissions: string[]) => {
-      if (!rbacEnabled && !isImpersonating) return true;
+      if (!permissionChecksEnabled) return true;
       return requiredPermissions.some(p => checkHasPermission(permissions, p));
     },
 
     hasRole: (role: string) => {
-      if (!rbacEnabled && !isImpersonating) return true;
+      if (!permissionChecksEnabled) return true;
       return roles.includes(role);
     },
 

@@ -1,17 +1,35 @@
-import type { ReorderModelListParams, UpdateModelInModelListParams, UpdateModelParams } from '@mastra/client-js';
+import type {
+  GetAgentResponse,
+  ReorderModelListParams,
+  UpdateModelInModelListParams,
+  UpdateModelParams,
+} from '@mastra/client-js';
 import { useMastraClient } from '@mastra/react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useStudioConfig } from '@/domains/configuration/context/studio-config-state';
 import { usePlaygroundStore } from '@/store/playground-store';
 
 export const useAgents = (options?: { enabled?: boolean }) => {
-  const client = useMastraClient();
   const { requestContext } = usePlaygroundStore();
+  const { baseUrl, headers } = useStudioConfig();
 
   return useQuery({
-    queryKey: ['agents', requestContext],
-    queryFn: () => client.listAgents(requestContext),
-    enabled: options?.enabled !== false,
+    queryKey: ['agents', requestContext, baseUrl, headers],
+    queryFn: async () => {
+      const url = new URL('/manifex/app/agents', baseUrl);
+      const response = await fetch(url, {
+        credentials: 'include',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      return response.json() as Promise<Record<string, GetAgentResponse>>;
+    },
+    enabled: options?.enabled !== false && Boolean(baseUrl),
   });
 };
 

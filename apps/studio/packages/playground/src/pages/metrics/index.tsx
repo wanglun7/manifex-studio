@@ -34,6 +34,8 @@ import { CircleSlashIcon, ExternalLinkIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useMastraPackages } from '@/domains/configuration/hooks/use-mastra-packages';
+import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities';
+import { isAuthenticated } from '@/domains/auth/types';
 import { LatencyCard } from '@/domains/metrics/components/latency-card';
 import { MemoryCard } from '@/domains/metrics/components/memory-card';
 import {
@@ -62,6 +64,7 @@ const DATE_TO_PARAM = 'dateTo';
 
 export default function Metrics() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { data: authCapabilities } = useAuthCapabilities();
 
   const urlPreset = searchParams.get(PERIOD_PARAM);
   const preset: DatePreset = isValidPreset(urlPreset) ? urlPreset : '24h';
@@ -151,6 +154,15 @@ export default function Metrics() {
     [setSearchParams],
   );
 
+  const scopedResourceFilter = useMemo(() => {
+    if (!authCapabilities || !isAuthenticated(authCapabilities)) return undefined;
+    const roles = authCapabilities.access?.roles ?? [];
+    if (roles.includes('owner') || roles.includes('operator')) return undefined;
+    const resourceId = authCapabilities.access?.resourceId ?? authCapabilities.user.resourceId;
+    return resourceId ? { resourceId } : undefined;
+  }, [authCapabilities]);
+  const authAccessReady = !!authCapabilities && isAuthenticated(authCapabilities) && !!authCapabilities.access;
+
   // Hydrate saved filters on first mount if URL is filter-clean.
   const hydratedRef = useRef(false);
   useEffect(() => {
@@ -172,6 +184,14 @@ export default function Metrics() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (!authAccessReady) {
+    return (
+      <NoDataPageLayout>
+        <div />
+      </NoDataPageLayout>
+    );
+  }
+
   return (
     <MetricsProvider
       preset={preset}
@@ -180,6 +200,7 @@ export default function Metrics() {
       onFilterTokensChange={handleFilterTokensChange}
       customRange={customRange}
       onCustomRangeChange={handleCustomRangeChange}
+      baseDimensionalFilter={scopedResourceFilter}
     >
       <MetricsContent />
     </MetricsProvider>

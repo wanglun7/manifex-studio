@@ -365,8 +365,8 @@ describe('AppSidebar — RBAC link gating while permission data loads', () => {
   });
 });
 
-describe('AppSidebar — developer settings link', () => {
-  it('does not render Settings for RBAC member users', async () => {
+describe('AppSidebar — settings link', () => {
+  it('renders Settings for RBAC member users', async () => {
     const memberCapabilities = {
       enabled: true,
       login: { type: 'credentials' as const },
@@ -381,7 +381,8 @@ describe('AppSidebar — developer settings link', () => {
 
     const agentsLink = await screen.findByRole('link', { name: /agents/i });
     expect(agentsLink.getAttribute('href')).toBe('/agents');
-    expect(screen.queryByRole('link', { name: /settings/i })).toBeNull();
+    const settingsLink = await screen.findByRole('link', { name: /settings/i });
+    expect(settingsLink.getAttribute('href')).toBe('/settings');
   });
 
   it('renders Settings for wildcard admin users', async () => {

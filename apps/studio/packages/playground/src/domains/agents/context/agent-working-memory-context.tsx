@@ -5,7 +5,7 @@ import { useAgentWorkingMemory } from '@/domains/agents/hooks/use-agent-working-
 type AgentWorkingMemoryContextType = {
   threadExists: boolean;
   workingMemoryData: string | null;
-  workingMemorySource: 'thread' | 'resource';
+  workingMemorySource?: 'thread' | 'resource';
   isLoading: boolean;
   isUpdating: boolean;
   updateWorkingMemory: (newMemory: string) => Promise<void>;
@@ -15,7 +15,7 @@ type AgentWorkingMemoryContextType = {
 export const WorkingMemoryContext = createContext<AgentWorkingMemoryContextType>({
   threadExists: false,
   workingMemoryData: null,
-  workingMemorySource: 'thread',
+  workingMemorySource: undefined,
   isLoading: false,
   isUpdating: false,
   updateWorkingMemory: () => Promise.resolve(),

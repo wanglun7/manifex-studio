@@ -3,6 +3,8 @@ import { mkdirSync, statSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, extname, resolve, sep } from 'node:path'
 import type { ApiRoute } from '@mastra/core/server'
+import type { ManifexAuthz } from './auth.js'
+import { getManifexUser } from './auth.js'
 import { sanitizeSandboxId, resolveThreadWorkspacePathByKey } from './agents/shared.js'
 
 const MAX_UPLOAD_BYTES = Number(process.env.MANIFEX_MAX_UPLOAD_BYTES || 200 * 1024 * 1024)
@@ -33,8 +35,11 @@ function safeFilename(name: string) {
   return cleaned || 'upload.bin'
 }
 
-function resolveWorkspaceFile(threadId: string, rawPath: string) {
-  const threadKey = sanitizeSandboxId(threadId)
+function contentTypeFor(path: string) {
+  return MIME_BY_EXT[extname(path).toLowerCase()] || 'application/octet-stream'
+}
+
+function resolveWorkspaceFile(threadKey: string, rawPath: string) {
   const workspacePath = resolveThreadWorkspacePathByKey(threadKey)
   const sandboxPath = rawPath
     .replace(/^sandbox:/, '')
@@ -44,15 +49,23 @@ function resolveWorkspaceFile(threadId: string, rawPath: string) {
   if (absolutePath !== workspacePath && !absolutePath.startsWith(`${workspacePath}${sep}`)) {
     throw new Error('Path escapes thread workspace')
   }
-  return { threadKey, workspacePath, absolutePath }
+  return { workspacePath, absolutePath }
 }
 
-function contentTypeFor(path: string) {
-  return MIME_BY_EXT[extname(path).toLowerCase()] || 'application/octet-stream'
+function currentUser(c: any) {
+  return getManifexUser(c.get('requestContext')?.get('user'))
 }
 
-async function uploadAttachments(threadId: string, formData: FormData) {
-  const { workspacePath } = resolveWorkspaceFile(threadId, '/workspace')
+function forbiddenResponse(message = 'Forbidden') {
+  return new Response(JSON.stringify({ error: message }), {
+    status: 403,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+async function uploadAttachments(authz: ManifexAuthz, user: NonNullable<ReturnType<typeof getManifexUser>>, threadId: string, formData: FormData) {
+  const threadKey = sanitizeSandboxId(await authz.threadSandboxKey(user, threadId))
+  const { workspacePath } = resolveWorkspaceFile(threadKey, '/workspace')
   const uploadsDir = resolve(workspacePath, 'uploads')
   mkdirSync(uploadsDir, { recursive: true })
 
@@ -86,6 +99,15 @@ async function uploadAttachments(threadId: string, formData: FormData) {
     await writeFile(absolutePath, bytes)
 
     const sandboxPath = `/workspace/uploads/${storedName}`
+    await authz.recordArtifact(user, {
+      threadId,
+      path: sandboxPath,
+      name: originalName,
+      mimeType: file.type || contentTypeFor(originalName),
+      size: bytes.byteLength,
+      sha256,
+    })
+
     attachments.push({
       id,
       name: originalName,
@@ -94,52 +116,68 @@ async function uploadAttachments(threadId: string, formData: FormData) {
       size: bytes.byteLength,
       sha256,
       sandboxPath,
-      artifactUrl: `/manifex/threads/${encodeURIComponent(
-        sanitizeSandboxId(threadId),
-      )}/artifacts?path=${encodeURIComponent(sandboxPath)}`,
+      artifactUrl: `/manifex/threads/${encodeURIComponent(threadId)}/artifacts?path=${encodeURIComponent(sandboxPath)}`,
     })
   }
 
   return attachments
 }
 
-export const manifexArtifactRoutes: ApiRoute[] = [
-  {
-    path: '/manifex/threads/:threadId/attachments',
-    method: 'POST',
-    handler: async c => {
-      const threadId = c.req.param('threadId')
-      const formData = await c.req.raw.formData()
-      const attachments = await uploadAttachments(threadId, formData)
-      return c.json({ attachments })
-    },
-  },
-  {
-    path: '/manifex/threads/:threadId/artifacts',
-    method: 'GET',
-    handler: async c => {
-      const threadId = c.req.param('threadId')
-      const rawPath = c.req.query('path')
-      if (!rawPath) return c.json({ error: 'Missing path' }, 400)
+export function createManifexArtifactRoutes(authz: ManifexAuthz): ApiRoute[] {
+  return [
+    {
+      path: '/manifex/threads/:threadId/attachments',
+      method: 'POST',
+      requiresAuth: true,
+      handler: async c => {
+        const user = currentUser(c)
+        if (!user) return forbiddenResponse()
 
-      try {
-        const { absolutePath } = resolveWorkspaceFile(threadId, rawPath)
-        const stat = statSync(absolutePath)
-        if (!stat.isFile()) return c.json({ error: 'Not a file' }, 404)
-
-        const body = await readFile(absolutePath)
-        return new Response(body, {
-          headers: {
-            'content-type': contentTypeFor(absolutePath),
-            'cache-control': 'private, max-age=30',
-          },
-        })
-      } catch (error) {
-        return c.json(
-          { error: error instanceof Error ? error.message : 'Artifact not found' },
-          404,
-        )
-      }
+        const threadId = c.req.param('threadId')
+        const agentId = c.req.query('agentId')
+        try {
+          await authz.ensureThreadAccess(user, threadId, agentId)
+          const formData = await c.req.raw.formData()
+          const attachments = await uploadAttachments(authz, user, threadId, formData)
+          return c.json({ attachments })
+        } catch (error) {
+          return forbiddenResponse(error instanceof Error ? error.message : 'Forbidden')
+        }
+      },
     },
-  },
-]
+    {
+      path: '/manifex/threads/:threadId/artifacts',
+      method: 'GET',
+      requiresAuth: true,
+      handler: async c => {
+        const user = currentUser(c)
+        if (!user) return forbiddenResponse()
+
+        const threadId = c.req.param('threadId')
+        const rawPath = c.req.query('path')
+        if (!rawPath) return c.json({ error: 'Missing path' }, 400)
+
+        try {
+          await authz.ensureThreadAccess(user, threadId)
+          const threadKey = sanitizeSandboxId(await authz.threadSandboxKey(user, threadId))
+          const { absolutePath } = resolveWorkspaceFile(threadKey, rawPath)
+          const stat = statSync(absolutePath)
+          if (!stat.isFile()) return c.json({ error: 'Not a file' }, 404)
+
+          const body = await readFile(absolutePath)
+          return new Response(body, {
+            headers: {
+              'content-type': contentTypeFor(absolutePath),
+              'cache-control': 'private, max-age=30',
+            },
+          })
+        } catch (error) {
+          return c.json(
+            { error: error instanceof Error ? error.message : 'Artifact not found' },
+            404,
+          )
+        }
+      },
+    },
+  ]
+}

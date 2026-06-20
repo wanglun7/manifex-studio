@@ -247,6 +247,8 @@ export function mergeDeltaIntoPage0(
 }
 
 export interface UseTracesArgs extends TracesFilters {
+  /** Disable all trace list queries until the caller has enough scoped filters to query safely. */
+  enabled?: boolean;
   /** Optional overrides for the live-tail polling tunables. Any omitted fields fall back to the
    *  built-in defaults; pass only what you want to change. */
   polling?: TracesPollingConfig;
@@ -276,6 +278,7 @@ interface UseTracesReturn {
 export const useTraces: (args: UseTracesArgs) => UseTracesReturn = ({
   filters,
   listMode = 'traces',
+  enabled = true,
   polling = {},
 }: UseTracesArgs) => {
   const {
@@ -324,10 +327,12 @@ export const useTraces: (args: UseTracesArgs) => UseTracesReturn = ({
     initialPageParam: 0,
     getNextPageParam: getTracesNextPageParam,
     select: selectUniqueTraces,
+    enabled,
     retry: false,
     // Disable polling on 403 to prevent flickering.
     // Fall back to page-mode polling only when delta isn't running.
     refetchInterval: q => {
+      if (!enabled) return false;
       if (is403ForbiddenError(q.state.error)) return false;
       if (!autoRefetch) return false;
       return deltaUnsupported ? pageModeRefetchIntervalMs : false;
@@ -360,7 +365,7 @@ export const useTraces: (args: UseTracesArgs) => UseTracesReturn = ({
         listMode,
       });
     },
-    enabled: !!cursor && !deltaUnsupported && autoRefetch,
+    enabled: enabled && !!cursor && !deltaUnsupported && autoRefetch,
     retry: false,
     refetchInterval: q => {
       if (q.state.error) return false;
@@ -429,7 +434,7 @@ export const useTraces: (args: UseTracesArgs) => UseTracesReturn = ({
         filters,
         listMode,
       }),
-    enabled: !!cursor && !deltaUnsupported && autoRefetch,
+    enabled: enabled && !!cursor && !deltaUnsupported && autoRefetch,
     refetchInterval: page0StatusRefreshIntervalMs,
     refetchOnMount: false,
     retry: false,

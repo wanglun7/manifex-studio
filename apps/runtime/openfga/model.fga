@@ -1,0 +1,72 @@
+model
+  schema 1.1
+
+type user
+
+type org
+  relations
+    define owner: [user]
+    define operator: [user]
+    define member: [user]
+    define admin: owner or operator
+
+type agent
+  relations
+    define org: [org]
+    define assignee: [user]
+    define manager: [user]
+    define viewer: assignee or member from org or owner from org or operator from org
+    define executor: assignee or owner from org or operator from org
+    define admin: manager or owner from org or operator from org
+
+type memory_resource
+  relations
+    define owner: [user]
+    define agent: [agent]
+    define viewer: owner or viewer from agent
+    define writer: owner or executor from agent
+
+type thread
+  relations
+    define owner: [user]
+    define agent: [agent]
+    define memory_resource: [memory_resource]
+    define viewer: owner or viewer from memory_resource
+    define writer: owner or writer from memory_resource
+
+type artifact
+  relations
+    define owner: [user]
+    define thread: [thread]
+    define viewer: owner or viewer from thread
+    define writer: owner or writer from thread
+
+type sandbox
+  relations
+    define owner: [user]
+    define thread: [thread]
+    define executor: owner or writer from thread
+
+type tool
+  relations
+    define agent: [agent]
+    define viewer: viewer from agent
+    define executor: executor from agent
+
+type run
+  relations
+    define owner: [user]
+    define thread: [thread]
+    define viewer: owner or viewer from thread
+    define operator: owner or writer from thread
+
+type studio
+  relations
+    define org: [org]
+    define viewer: owner from org or operator from org
+    define admin: owner from org or operator from org
+
+type observability
+  relations
+    define org: [org]
+    define viewer: owner from org or operator from org

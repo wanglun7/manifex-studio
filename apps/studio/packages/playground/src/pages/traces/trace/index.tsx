@@ -17,6 +17,8 @@ import type { SpanTab } from '@mastra/playground-ui';
 import { CircleGaugeIcon, SaveIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { useAuthCapabilities } from '@/domains/auth/hooks/use-auth-capabilities';
+import { isAuthenticated } from '@/domains/auth/types';
 import { TraceAsItemDialog } from '@/domains/observability/components/trace-as-item-dialog';
 import { useScorers } from '@/domains/scores';
 import { useTraceSpanScores } from '@/domains/scores/hooks/use-trace-span-scores';
@@ -42,12 +44,23 @@ export default function TracePage() {
   const [spanTab, setSpanTab] = useState<SpanTab>(initialSpanTab);
   const [spanScoresPage, setSpanScoresPage] = useState(0);
   const [datasetDialogOpen, setDatasetDialogOpen] = useState(false);
+  const { data: authCapabilities } = useAuthCapabilities();
+  const scopedResourceId = useMemo(() => {
+    if (!authCapabilities || !isAuthenticated(authCapabilities)) return undefined;
+    const roles = authCapabilities.access?.roles ?? [];
+    if (roles.includes('owner') || roles.includes('operator')) return undefined;
+    return authCapabilities.access?.resourceId ?? authCapabilities.user.resourceId;
+  }, [authCapabilities]);
 
-  const { data: traceLight, isLoading: isTraceLoading, error: traceError } = useTraceLightSpans(traceId);
+  const { data: traceLight, isLoading: isTraceLoading, error: traceError } = useTraceLightSpans(traceId, {
+    resourceId: scopedResourceId,
+  });
   const lightSpans = useMemo(() => traceLight?.spans ?? [], [traceLight?.spans]);
   const rootSpan = useMemo(() => lightSpans.find(s => s.parentSpanId == null), [lightSpans]);
 
-  const { data: spanDetailData, isLoading: isLoadingSpanDetail } = useSpanDetail(traceId, featuredSpanId ?? '');
+  const { data: spanDetailData, isLoading: isLoadingSpanDetail } = useSpanDetail(traceId, featuredSpanId ?? '', {
+    resourceId: scopedResourceId,
+  });
 
   // Reset pagination whenever the active span changes — otherwise a page index from a previous
   // span could be reused against a span that has fewer (or no) scores.

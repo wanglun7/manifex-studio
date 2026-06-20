@@ -94,6 +94,7 @@ import type {
   ListScoresBySpanParams,
   LegacyTracesPaginatedArg,
   LegacyGetTracesResponse,
+  ObservabilityScopeParams,
 } from './resources/observability';
 import type {
   ClientOptions,
@@ -979,13 +980,13 @@ export class MastraClient extends BaseResource {
   }
 
   /** Retrieves a lightweight trace by ID (timeline fields only, excludes heavy fields). */
-  getTraceLight(traceId: string): Promise<GetTraceLightResponse> {
-    return this.observability.getTraceLight(traceId);
+  getTraceLight(traceId: string, params?: ObservabilityScopeParams): Promise<GetTraceLightResponse> {
+    return this.observability.getTraceLight(traceId, params);
   }
 
   /** Retrieves a single span with full details by trace ID and span ID. */
-  getSpan(traceId: string, spanId: string): Promise<GetSpanResponse> {
-    return this.observability.getSpan(traceId, spanId);
+  getSpan(traceId: string, spanId: string, params?: ObservabilityScopeParams): Promise<GetSpanResponse> {
+    return this.observability.getSpan(traceId, spanId, params);
   }
 
   /** Extracts a structured trajectory from a trace's spans. */
@@ -1030,7 +1031,7 @@ export class MastraClient extends BaseResource {
    * Retrieves the subtree of spans rooted at a given span. The optional `depth` field
    * bounds descendant levels below the anchor (0 = anchor only; omitted = full subtree).
    */
-  getBranch(params: GetBranchArgs): Promise<GetBranchResponse> {
+  getBranch(params: GetBranchArgs & ObservabilityScopeParams): Promise<GetBranchResponse> {
     return this.observability.getBranch(params);
   }
 

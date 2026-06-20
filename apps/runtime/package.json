@@ -14,6 +14,7 @@
     "test:skills": "tsx tests/smoke/verify-skills.ts"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "@mastra/core": "^1.42.0",
     "@mastra/docker": "^0.3.0",
     "@mastra/duckdb": "^1.5.0",
@@ -22,6 +23,7 @@
     "@mastra/mcp": "^1.10.0",
     "@mastra/memory": "^1.20.3",
     "@mastra/observability": "^1.14.1",
+    "@openfga/sdk": "^0.9.6",
     "mcp-searxng": "^1.6.0",
     "tsx": "^4.20.6"
   },

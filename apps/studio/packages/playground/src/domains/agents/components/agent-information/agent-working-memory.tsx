@@ -29,18 +29,24 @@ export const AgentWorkingMemory = ({ agentId }: AgentWorkingMemoryProps) => {
   const config = data?.config;
   // Check if working memory is enabled
   const isWorkingMemoryEnabled = Boolean(config?.workingMemory?.enabled);
+  const configuredWorkingMemorySource =
+    config?.workingMemory?.scope === 'resource' || config?.workingMemory?.scope === 'thread'
+      ? config.workingMemory.scope
+      : undefined;
+  const displayWorkingMemorySource = workingMemorySource ?? configuredWorkingMemorySource;
+  const displayWorkingMemoryData = workingMemoryData ?? config?.workingMemory?.template ?? '';
 
   // All hooks must be called before any early returns
   const { isCopied, handleCopy } = useCopyToClipboard({
-    text: workingMemoryData ?? '',
+    text: displayWorkingMemoryData,
     copyMessage: 'Working memory copied!',
   });
-  const [editValue, setEditValue] = useState<string>(workingMemoryData ?? '');
+  const [editValue, setEditValue] = useState<string>(displayWorkingMemoryData);
   const [isEditing, setIsEditing] = useState(false);
 
   React.useEffect(() => {
-    setEditValue(workingMemoryData ?? '');
-  }, [workingMemoryData]);
+    setEditValue(displayWorkingMemoryData);
+  }, [displayWorkingMemoryData]);
 
   if (isLoading || isConfigLoading) {
     return <Skeleton className="h-32 w-full" />;
@@ -51,21 +57,21 @@ export const AgentWorkingMemory = ({ agentId }: AgentWorkingMemoryProps) => {
       <div>
         <div className="flex items-center gap-2 mb-2">
           <h3 className="text-sm font-medium text-neutral5">Working Memory</h3>
-          {isWorkingMemoryEnabled && workingMemorySource && (
+          {isWorkingMemoryEnabled && displayWorkingMemorySource && (
             <span
               className={cn(
                 'text-xs font-medium px-2 py-0.5 rounded',
-                workingMemorySource === 'resource'
+                displayWorkingMemorySource === 'resource'
                   ? 'bg-purple-500/20 text-purple-400'
                   : 'bg-blue-500/20 text-blue-400',
               )}
               title={
-                workingMemorySource === 'resource'
+                displayWorkingMemorySource === 'resource'
                   ? 'Shared across all threads for this agent'
                   : 'Specific to this conversation thread'
               }
             >
-              {workingMemorySource}
+              {displayWorkingMemorySource}
             </span>
           )}
         </div>
@@ -78,11 +84,11 @@ export const AgentWorkingMemory = ({ agentId }: AgentWorkingMemoryProps) => {
         <>
           {!isEditing ? (
             <>
-              {workingMemoryData ? (
+              {displayWorkingMemoryData ? (
                 <>
-                  {workingMemoryData.trim().startsWith('{') ? (
+                  {displayWorkingMemoryData.trim().startsWith('{') ? (
                     <CodeDisplay
-                      content={workingMemoryData || ''}
+                      content={displayWorkingMemoryData}
                       isCopied={isCopied}
                       onCopy={handleCopy}
                       className="bg-surface3 text-sm font-mono min-h-[150px] border border-border1 rounded-lg"
@@ -95,7 +101,7 @@ export const AgentWorkingMemory = ({ agentId }: AgentWorkingMemoryProps) => {
                             className="p-3 cursor-pointer hover:bg-surface4/20 transition-colors relative group text-ui-xs"
                             onClick={handleCopy}
                           >
-                            <MarkdownRenderer>{workingMemoryData}</MarkdownRenderer>
+                            <MarkdownRenderer>{displayWorkingMemoryData}</MarkdownRenderer>
                             {isCopied && (
                               <span className="absolute top-2 right-2 text-ui-xs px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-500">
                                 Copied!

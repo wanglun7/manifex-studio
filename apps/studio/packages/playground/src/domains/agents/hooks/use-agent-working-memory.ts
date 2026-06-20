@@ -14,7 +14,7 @@ export function useAgentWorkingMemory(agentId: string, threadId: string, resourc
   const client = useMastraClient();
   const [threadExists, setThreadExists] = useState(false);
   const [workingMemoryData, setWorkingMemoryData] = useState<string | null>(null);
-  const [workingMemorySource, setWorkingMemorySource] = useState<'thread' | 'resource'>('thread');
+  const [workingMemorySource, setWorkingMemorySource] = useState<'thread' | 'resource' | undefined>();
   const [workingMemoryFormat, setWorkingMemoryFormat] = useState<'json' | 'markdown'>('markdown');
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -54,11 +54,12 @@ export function useAgentWorkingMemory(agentId: string, threadId: string, resourc
       }
     } catch (error) {
       setWorkingMemoryData(null);
+      setWorkingMemorySource(undefined);
       console.error('Error fetching working memory', error);
     } finally {
       setIsLoading(false);
     }
-  }, [agentId, threadId, resourceId]);
+  }, [agentId, threadId, resourceId, requestContext, client]);
 
   useEffect(() => {
     void refetch();

@@ -8,16 +8,18 @@ const IMMUTABLE_CACHE_TIME = 1000 * 60 * 60 * 24 * 30; // 30 days, massive cache
 export function useSpanDetail(
   traceId: string | null | undefined,
   spanId: string | null | undefined,
+  options: { resourceId?: string } = {},
 ): UseQueryResult<{ span: LightSpanRecord & { output?: unknown; result?: unknown } } | null> {
   const client = useMastraClient();
+  const { resourceId } = options;
 
   return useQuery({
-    queryKey: ['span-detail', traceId, spanId],
+    queryKey: ['span-detail', traceId, spanId, resourceId],
     queryFn: async () => {
       if (!traceId || !spanId) {
         throw new Error('Trace ID and Span ID are required');
       }
-      return client.getSpan(traceId, spanId);
+      return client.getSpan(traceId, spanId, { resourceId });
     },
     enabled: !!traceId && !!spanId,
     staleTime: query => {

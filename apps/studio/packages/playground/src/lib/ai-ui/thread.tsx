@@ -191,7 +191,8 @@ const Composer = ({ agentId, threadId, hasModelList, hideModelSwitcher }: Compos
       pendingThreadIdRef.current ||
       (attachments.length > 0 ? crypto.randomUUID() : undefined);
     if (!threadId && effectiveThreadId) pendingThreadIdRef.current = effectiveThreadId;
-    const coreUserMessages = attachments.length > 0 ? await toCoreUserMessages({ threadId: effectiveThreadId }) : undefined;
+    const coreUserMessages =
+      attachments.length > 0 ? await toCoreUserMessages({ agentId, threadId: effectiveThreadId }) : undefined;
     const message = text;
     setText('');
     setThreadInput?.('');

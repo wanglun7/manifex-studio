@@ -9,22 +9,24 @@ export interface UseBranchArgs {
   traceId: string | null | undefined;
   spanId: string | null | undefined;
   depth?: number;
+  resourceId?: string;
 }
 
 export function useBranch({
   traceId,
   spanId,
   depth,
+  resourceId,
 }: UseBranchArgs): UseQueryResult<{ traceId: string; spans: LightSpanRecord[] } | null> {
   const client = useMastraClient();
 
   return useQuery({
-    queryKey: ['branch', traceId, spanId, depth],
+    queryKey: ['branch', traceId, spanId, depth, resourceId],
     queryFn: async () => {
       if (!traceId || !spanId) {
         throw new Error('traceId and spanId are required');
       }
-      return client.getBranch({ traceId, spanId, depth });
+      return client.getBranch({ traceId, spanId, depth, resourceId });
     },
     enabled: !!traceId && !!spanId,
     staleTime: query => {

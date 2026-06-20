@@ -40,9 +40,11 @@ export type PublicAuthCapabilities = {
  */
 export type AuthenticatedUser = {
   id: string;
+  orgId?: string;
   email?: string;
   name?: string;
   avatarUrl?: string;
+  resourceId?: string;
 };
 
 /**
@@ -62,6 +64,7 @@ export type CapabilityFlags = {
 export type UserAccess = {
   roles: string[];
   permissions: string[];
+  resourceId?: string;
 } | null;
 
 /**
@@ -85,9 +88,11 @@ export type AuthCapabilities = PublicAuthCapabilities | AuthenticatedCapabilitie
  */
 export type CurrentUser = {
   id: string;
+  orgId?: string;
   email?: string;
   name?: string;
   avatarUrl?: string;
+  resourceId?: string;
   roles?: string[];
   permissions?: string[];
 } | null;
