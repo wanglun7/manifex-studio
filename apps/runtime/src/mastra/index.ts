@@ -712,8 +712,9 @@ export const mastra = new Mastra({
           if (!isPlaceholderThreadId(threadId)) requestContext.set(MASTRA_THREAD_ID_KEY, threadId!)
           if (resourceId) requestContext.set(MASTRA_RESOURCE_ID_KEY, resourceId)
 
-          const threadKey = !isPlaceholderThreadId(threadId) ? sanitizeSandboxId(`${resourceId}:${agentId}:${threadId}`) : undefined
-          if (threadKey) requestContext.set(MANIFEX_SANDBOX_KEY, threadKey)
+          const rawThreadKey = !isPlaceholderThreadId(threadId) ? `${resourceId}:${agentId}:${threadId}` : undefined
+          const threadKey = rawThreadKey ? sanitizeSandboxId(rawThreadKey) : undefined
+          if (rawThreadKey) requestContext.set(MANIFEX_SANDBOX_KEY, rawThreadKey)
           if (threadKey) {
             threadSandboxManager.beginRequest(
               threadKey,

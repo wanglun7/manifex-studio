@@ -160,8 +160,17 @@ export function createManifexArtifactRoutes(authz: ManifexAuthz): ApiRoute[] {
         try {
           await authz.ensureThreadAccess(user, threadId)
           const threadKey = sanitizeSandboxId(await authz.threadSandboxKey(user, threadId))
-          const { absolutePath } = resolveWorkspaceFile(threadKey, rawPath)
-          const stat = statSync(absolutePath)
+          let { absolutePath } = resolveWorkspaceFile(threadKey, rawPath)
+          let stat: ReturnType<typeof statSync>
+          try {
+            stat = statSync(absolutePath)
+          } catch (error) {
+            const legacyThreadKey = sanitizeSandboxId(threadKey)
+            if (legacyThreadKey === threadKey) throw error
+            const legacyFile = resolveWorkspaceFile(legacyThreadKey, rawPath)
+            absolutePath = legacyFile.absolutePath
+            stat = statSync(absolutePath)
+          }
           if (!stat.isFile()) return c.json({ error: 'Not a file' }, 404)
 
           const body = await readFile(absolutePath)
